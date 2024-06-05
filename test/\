@@ -1,0 +1,41 @@
+pragma solidity ^0.8.19;
+
+import {LockedTokenTransfers} from "src/ProgrammableTokenTransfers.sol";
+import {ERC20Mintable} from "src/ReceiptToken.sol";
+import "forge-std/Test.sol";
+
+contract ProgrammableTokenTransfersFork is Test {
+    address owner = 0x11EC78492D53c9276dD7a184B1dbfB34E50B710D; //gov
+    address link = 0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
+    address router = 0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59;
+    ERC20Mintable lockedToken = ERC20Mintable(0xCbB162B761B83578b2a0226cbAf4C1adE0d60B2e); //sDOLA
+    LockedTokenTransfers lockedTokenBridge;
+    uint64 l2ChainId = 421614; //Arbitrum Sepolia chainid
+    uint64 l2ChainSelector = 3478487238524512106; //Arbitrum CCIP chainselector
+    address l2Bridge = 0x4C7b266B4bf0A8758fa85E69292eE55c212236cF;
+    uint l2Fork;
+
+    function setUp() external {
+        string memory testnetL2RPC = vm.envString("RPC_MAINNET_SEPOLIA");
+
+        l2Fork = vm.createSelectFork(testnetL2RPC);
+        lockedTokenBridge = new LockedTokenTransfers(address(lockedToken), owner, router, link);
+        vm.startPrank(owner); 
+        lockedToken.setOperator(address(lockedTokenBridge), true);
+        lockedToken.mint(owner, 1000 ether);
+        lockedToken.updateExchangeRate(1.1 ether, block.timestamp);
+        lockedToken.approve(address(lockedTokenBridge), 1000 ether);
+        vm.deal(address(lockedTokenBridge), 1 ether);
+
+        lockedTokenBridge.allowlistDestinationChain(l2ChainSelector, true);
+        lockedTokenBridge.allowlistSourceChain(l2ChainSelector, true);
+        lockedTokenBridge.allowlistSender(l2ChainSelector, l2Bridge);
+        vm.stopPrank();
+    }
+
+    function testSendMessageiPayNative() external {
+        vm.startPrank(owner);
+        assertEq(lockedTokenBridge.allowlistedDestinationChains(l2ChainSelector), true, "Destination chain not allow listed");
+        lockedTokenBridge.sendMessagePayNative(l2ChainSelector, l2Bridge, owner, 10^16);
+    }
+}

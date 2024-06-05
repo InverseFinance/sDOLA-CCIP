@@ -5,12 +5,21 @@ import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/
 import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/OwnerIsCreator.sol";
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
-import {EnumerableMap} from "@chainlink/contracts-ccip/src/v0.8/vendor/openzeppelin-solidity/v4.8.3/contracts/utils/structs/EnumerableMap.sol";
+import {EnumerableMap} from "lib/openzeppelin-contracts/contracts/utils/structs/EnumerableMap.sol";
+
 
 interface IERC20 {
     function transfer(address, uint) external;
     function transferFrom(address, address, uint) external;
-    function balanceOf(address) external;
+    function balanceOf(address) external returns(uint);
+    function approve(address, uint) external;
+}
+
+interface IExchangeRateProvider {
+    function exchangeRate() external view returns(uint);
+    function lastUpdate() external view returns(uint);
+    function setExchangeRate(uint) external returns(bool);
+    function setLastUpdate(uint) external returns(bool);
 }
 
 /**
@@ -21,9 +30,8 @@ interface IERC20 {
 
 /// @title - A simple messenger contract for transferring/receiving tokens and data across chains.
 /// @dev - This example shows how to recover tokens in case of revert
-contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
+contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     using EnumerableMap for EnumerableMap.Bytes32ToUintMap;
-    using SafeERC20 for IERC20;
 
     // Custom errors to provide more descriptive revert messages.
     error NotEnoughBalance(uint256 currentBalance, uint256 calculatedFees); // Used to make sure contract has enough balance to cover the fees.
@@ -54,8 +62,10 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
     event MessageSent(
         bytes32 indexed messageId, // The unique ID of the CCIP message.
         uint64 indexed destinationChainSelector, // The chain selector of the destination chain.
-        address receiver, // The address of the receiver on the destination chain.
-        string text, // The text being sent.
+        address receiverContract, // The address of the receiver contract on the destination chain.
+        address receiver, //The final receiver of sent tokens
+        uint timestamp, // The timestamp being sent.
+        uint exchangeRate, // The exchange rate that was sent
         address token, // The token address that was transferred.
         uint256 tokenAmount, // The token amount that was transferred.
         address feeToken, // the token address used to pay CCIP fees.
@@ -67,7 +77,9 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
         bytes32 indexed messageId, // The unique ID of the CCIP message.
         uint64 indexed sourceChainSelector, // The chain selector of the source chain.
         address sender, // The address of the sender from the source chain.
-        string text, // The text that was received.
+        address receiver, //The final receiver of sent tokens.
+        uint timestamp, // The timestamp that was received.
+        uint exchangeRate, // The exchange rate that was received.
         address token, // The token address that was transferred.
         uint256 tokenAmount // The token amount that was transferred.
     );
@@ -75,10 +87,14 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
     event MessageFailed(bytes32 indexed messageId, bytes reason);
     event MessageRecovered(bytes32 indexed messageId);
 
+    bool public isCanonical; // Indicate whether or not the contract exists on the same chain as the main sDOLA contract
+    address public exchangeRateProvider; //Address to call for sDOLA exchange rate reads and updates
     bytes32 private s_lastReceivedMessageId; // Store the last received messageId.
     address private s_lastReceivedTokenAddress; // Store the last received token address.
     uint256 private s_lastReceivedTokenAmount; // Store the last received amount.
-    string private s_lastReceivedText; // Store the last received text.
+    uint256 private s_lastReceivedTimestamp; // Store the last received timestamp.
+    uint256 private s_lastReceivedExchangeRate; //Store the last received exchange rate
+    address private s_lastReceiver; //Store the last receiver of tokens
 
     // Mapping to keep track of allowlisted destination chains.
     mapping(uint64 => bool) public allowlistedDestinationChains;
@@ -91,18 +107,12 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
 
     IERC20 private s_linkToken;
 
-    //Bridged token
-    IERC20 public token;
-
     // The message contents of failed messages are stored here.
     mapping(bytes32 messageId => Client.Any2EVMMessage contents)
         public s_messageContents;
 
     // Contains failed messages and their state.
     EnumerableMap.Bytes32ToUintMap internal s_failedMessages;
-    
-    //The canonical chain where real tokens are locked
-    uint64 canonicalChain;
 
     // This is used to simulate a revert in the processMessage function.
     bool internal s_simRevert = false;
@@ -110,10 +120,12 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
     /// @notice Constructor initializes the contract with the router address.
     /// @param _router The address of the router contract.
     /// @param _link The address of the link contract.
-    constructor(address _token, uint64 _canonicalChain, address _router, address _link) CCIPReceiver(_router) {
-        token = IERC20(_token);
+    /// @param _exchangeRateProvider The address of the exchange rate contract.
+    /// @param _isCanonical Boolean indicating whether or not this bridge exists on the canonical sDOLA chain
+    constructor(address _router, address _link, address _exchangeRateProvider, bool _isCanonical) CCIPReceiver(_router) {
         s_linkToken = IERC20(_link);
-        canonicalChain = _canonicalChain;
+        isCanonical = _isCanonical;
+        exchangeRateProvider = _exchangeRateProvider;
     }
 
     /// @dev Modifier that checks if the chain with the given destinationChainSelector is allowlisted.
@@ -183,27 +195,28 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
     /// @dev Assumes your contract has sufficient LINK to pay for CCIP fees.
     /// @param _destinationChainSelector The identifier (aka selector) for the destination blockchain.
     /// @param _receiver The address of the recipient on the destination blockchain.
-    /// @param _text The string data to be sent.
+    /// @param _token token address.
     /// @param _amount token amount.
     /// @return messageId The ID of the CCIP message that was sent.
     function sendMessagePayLINK(
         uint64 _destinationChainSelector,
+        address _receiverContract,
         address _receiver,
-        address _user,
+        address _token,
         uint256 _amount
     )
         external
         onlyOwner
         onlyAllowlistedDestinationChain(_destinationChainSelector)
-        validateReceiver(_receiver)
+        validateReceiver(_receiverContract)
         returns (bytes32 messageId)
     {
         // Create an EVM2AnyMessage struct in memory with necessary information for sending a cross-chain message
         // address(linkToken) means fees are paid in LINK
         Client.EVM2AnyMessage memory evm2AnyMessage = _buildCCIPMessage(
+            _receiverContract,
             _receiver,
-            _constructMessageData(user),
-            token,
+            _token,
             _amount,
             address(s_linkToken)
         );
@@ -230,9 +243,11 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
         emit MessageSent(
             messageId,
             _destinationChainSelector,
+            _receiverContract,
             _receiver,
-            _text,
-            token,
+            block.timestamp,
+            s_lastReceivedExchangeRate,
+            _token,
             _amount,
             address(s_linkToken),
             fees
@@ -242,32 +257,54 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
         return messageId;
     }
 
-    /// @notice Sends data and transfer tokens to receiver on the destination chain.
+    /// @notice Sends data and transfer tokens to message sender on the destination chain.
     /// @notice Pay for fees in native gas.
     /// @dev Assumes your contract has sufficient native gas like ETH on Ethereum or MATIC on Polygon.
     /// @param _destinationChainSelector The identifier (aka selector) for the destination blockchain.
-    /// @param _receiver The address of the recipient on the destination blockchain.
+    /// @param _receiverContract The address of the recipient contract on the destination blockchain.
     /// @param _token token address.
     /// @param _amount token amount.
     /// @return messageId The ID of the CCIP message that was sent.
     function sendMessagePayNative(
         uint64 _destinationChainSelector,
-        address _receiver,
-        address _user,
+        address _receiverContract,
+        address _token,
         uint256 _amount
     )
-        external
+        public
+        returns (bytes32 messageId)
+    {
+        return sendMessagePayNative(_destinationChainSelector, _receiverContract, msg.sender, _token, _amount);
+    }
+
+    /// @notice Sends data and transfer tokens to receiver on the destination chain.
+    /// @notice Pay for fees in native gas.
+    /// @dev Assumes your contract has sufficient native gas like ETH on Ethereum or MATIC on Polygon.
+    /// @param _destinationChainSelector The identifier (aka selector) for the destination blockchain.
+    /// @param _receiverContract The address of the recipient contract on the destination blockchain.
+    /// @param _receiver The address to send tokens to
+    /// @param _token token address.
+    /// @param _amount token amount.
+    /// @return messageId The ID of the CCIP message that was sent.
+    function sendMessagePayNative(
+        uint64 _destinationChainSelector,
+        address _receiverContract,
+        address _receiver,
+        address _token,
+        uint256 _amount
+    )
+        public
         onlyOwner
         onlyAllowlistedDestinationChain(_destinationChainSelector)
-        validateReceiver(_receiver)
+        validateReceiver(_receiverContract)
         returns (bytes32 messageId)
     {
         // Create an EVM2AnyMessage struct in memory with necessary information for sending a cross-chain message
         // address(0) means fees are paid in native gas
         Client.EVM2AnyMessage memory evm2AnyMessage = _buildCCIPMessage(
+            _receiverContract,
             _receiver,
-            _constructMessageData(_user),
-            token,
+            _token,
             _amount,
             address(0)
         );
@@ -294,9 +331,11 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
         emit MessageSent(
             messageId,
             _destinationChainSelector,
+            _receiverContract,
             _receiver,
-            _text,
-            token,
+            block.timestamp,
+            s_lastReceivedExchangeRate,
+            _token,
             _amount,
             address(0),
             fees
@@ -308,9 +347,11 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
 
     /**
      * @notice Returns the details of the last CCIP received message.
-     * @dev This function retrieves the ID, text, token address, and token amount of the last received CCIP message.
+     * @dev This function retrieves the ID, timestamp, token address, and token amount of the last received CCIP message.
      * @return messageId The ID of the last received CCIP message.
-     * @return text The text of the last received CCIP message.
+     * @return timestamp The timestamp of the last received CCIP message.
+     * @return exchangeRate The exchangeRate of the last received CCIP message.
+     * @return receiver The last address to receive tokens.
      * @return tokenAddress The address of the token in the last CCIP received message.
      * @return tokenAmount The amount of the token in the last CCIP received message.
      */
@@ -319,14 +360,18 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
         view
         returns (
             bytes32 messageId,
-            string memory text,
+            uint timestamp,
+            uint exchangeRate,
+            address receiver,
             address tokenAddress,
             uint256 tokenAmount
         )
     {
         return (
             s_lastReceivedMessageId,
-            s_lastReceivedText,
+            s_lastReceivedTimestamp,
+            s_lastReceivedExchangeRate,
+            s_lastReceiver,
             s_lastReceivedTokenAddress,
             s_lastReceivedTokenAmount
         );
@@ -438,7 +483,7 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
 
         // This example expects one token to have been sent, but you can handle multiple tokens.
         // Transfer the associated tokens to the specified receiver as an escape hatch.
-        IERC20(message.destTokenAmounts[0].token).safeTransfer(
+        IERC20(message.destTokenAmounts[0].token).transfer(
             tokenReceiver,
             message.destTokenAmounts[0].amount
         );
@@ -458,58 +503,41 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
         Client.Any2EVMMessage memory any2EvmMessage
     ) internal override {
         s_lastReceivedMessageId = any2EvmMessage.messageId; // fetch the messageId
-        uint updateRate;
-        uint updateTime;
-        (s_lastReceivedUser, updateRate, updateTime) = abi.decode(any2EvmMessage.data, (address, uint, uint)); // abi-decoding of the user receiver address + exchange rate data
+        (s_lastReceivedTimestamp, s_lastReceivedExchangeRate, s_lastReceiver) = abi.decode(any2EvmMessage.data, (uint, uint, address)); // abi-decoding of the sent timestamp and exchangerate
         // Expect one token to be transferred at once, but you can transfer several tokens.
         s_lastReceivedTokenAddress = any2EvmMessage.destTokenAmounts[0].token;
         s_lastReceivedTokenAmount = any2EvmMessage.destTokenAmounts[0].amount;
-        if(block.chainId == canonicalChain) {
-            if(s_lastReceivedTokenAmount > 0){
-                _onReceiveToken(s_lastReceivedUser, s_lastReceivedTokenAmount);
-            }
-        } else {
-            //Update local network exchange rate if not canonical chain
-            _onReceiveUpdate(updateRate, updateTime);
-            if(s_lastReceivedTokenAmount > 0) {
-                _onReceiveToken(s_lastReceivedUser, s_lastReceivedTokenAmount);
-            }
+        IERC20(s_lastReceivedTokenAddress).transfer(s_lastReceiver, s_lastReceivedTokenAmount);
+        if(!isCanonical){
+            IExchangeRateProvider(exchangeRateProvider).setExchangeRate(s_lastReceivedExchangeRate);
+            IExchangeRateProvider(exchangeRateProvider).setLastUpdate(s_lastReceivedTimestamp);
         }
-            
         emit MessageReceived(
             any2EvmMessage.messageId,
             any2EvmMessage.sourceChainSelector, // fetch the source chain identifier (aka selector)
             abi.decode(any2EvmMessage.sender, (address)), // abi-decoding of the sender address,
-            abi.decode(any2EvmMessage.data, (string)),
+            s_lastReceiver,
+            s_lastReceivedTimestamp,
+            s_lastReceivedExchangeRate,
             any2EvmMessage.destTokenAmounts[0].token,
             any2EvmMessage.destTokenAmounts[0].amount
         );
     }
 
-    function _constructMessageData(address user) internal virtual returns (bytes memory);
-
-    function _onSendToken(uint amount) internal virtual;
-
-    function _onReceiveUpdate(uint updateRate, uint updateTime) internal virtual;
-
-    function _onReceiveToken(address user, uint amount) internal virtual;
-
-
     /// @notice Construct a CCIP message.
     /// @dev This function will create an EVM2AnyMessage struct with all the necessary information for programmable tokens transfer.
     /// @param _receiver The address of the receiver.
-    /// @param _text The string data to be sent.
     /// @param _token The token to be transferred.
     /// @param _amount The amount of the token to be transferred.
     /// @param _feeTokenAddress The address of the token used for fees. Set address(0) for native gas.
     /// @return Client.EVM2AnyMessage Returns an EVM2AnyMessage struct which contains information for sending a CCIP message.
     function _buildCCIPMessage(
+        address _receiverContract,
         address _receiver,
-        bytes calldata _transferData,
         address _token,
         uint256 _amount,
         address _feeTokenAddress
-    ) private pure returns (Client.EVM2AnyMessage memory) {
+    ) private view returns (Client.EVM2AnyMessage memory) {
         // Set the token amounts
         Client.EVMTokenAmount[]
             memory tokenAmounts = new Client.EVMTokenAmount[](1);
@@ -520,8 +548,8 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
         tokenAmounts[0] = tokenAmount;
         // Create an EVM2AnyMessage struct in memory with necessary information for sending a cross-chain message
         Client.EVM2AnyMessage memory evm2AnyMessage = Client.EVM2AnyMessage({
-            receiver: abi.encode(_receiver), // ABI-encoded receiver address
-            data: _transferData,
+            receiver: abi.encode(_receiverContract), // ABI-encoded receiver address
+            data: abi.encode(getLastUpdate(), getExchangeRate(), _receiver), // ABI-encoded uint
             tokenAmounts: tokenAmounts, // The amount and type of token being transferred
             extraArgs: Client._argsToBytes(
                 // Additional arguments, setting gas limit
@@ -531,6 +559,18 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
             feeToken: _feeTokenAddress
         });
         return evm2AnyMessage;
+    }
+
+    function getExchangeRate() public view returns(uint exchangeRate){
+            exchangeRate = IExchangeRateProvider(exchangeRateProvider).exchangeRate();
+    }
+
+    function getLastUpdate() public view returns(uint lastUpdate) {
+        if(isCanonical){
+            lastUpdate = block.timestamp;
+        } else {
+            lastUpdate = IExchangeRateProvider(exchangeRateProvider).lastUpdate();
+        }
     }
 
     /// @notice Fallback function to allow the contract to receive Ether.
@@ -570,62 +610,12 @@ contract ProgrammableDefensiveTokenTransfers is CCIPReceiver, OwnerIsCreator {
         // Revert if there is nothing to withdraw
         if (amount == 0) revert NothingToWithdraw();
 
-        IERC20(_token).safeTransfer(_beneficiary, amount);
-    }
-}
-
-contract LockedTokenTransfers is ProgrammableDefensiveTokenTransfers {
-    
-    constructor(address _token, address _owner, uint64 _canonicalChain, address _router, address _link) ProgrammableDefensiveTokenTransfers(_token, _canonicalChain, _router, _link) {
-        require(block.chainId == _canonicalChain, "Deploy lock bridge on non-canonical network");
-        owner = _owner;
+        IERC20(_token).transfer(_beneficiary, amount);
     }
 
-    function _constructMessageData(address user) internal override returns (bytes memory){
-        uint exchangeRate = IERC20Receipt(token).exchangeRate();
-        uint lastUpdate = block.timestamp;
-        return abi.encode((user, exchangeRate, lastUpdate), (address, uint, uint));
+    //TODO: Testing function. Remove in prod.
+    function setExchangeRate(uint newExchangeRate) external {
+        s_lastReceivedExchangeRate = newExchangeRate;
     }
-
-    function _onTokenReceived(address user, uint amount) internal override {
-        token.transfer(user, amount);
-    }
-
-    function _onReceiveUpdate(uint updateRate, uint updateTime) internal override {
-        //Do nothing
-    }
-
-    function _onSendToken(uint amount) internal override {
-        token.transferFrom(msg.sender, address(this), amount);
-    }
-
-}
-
-contract ReceiptTokenTransfers is ProgrammableDefensiveTokenTransfers {
-    
-    constructor(address _token, address _owner, uint64 _canonicalChain, address _router, address _link) ProgrammableDefensiveTokenTransfers(_token, _canonicalChain, _router, _link) {
-        require(block.chainId != _canonicalChain, "Deploy receipt bridge on canonical network");
-        owner = _owner;
-    }
-
-    function _constructMessageData(address user) internal override returns (bytes memory){
-        uint exchangeRate = IERC20Receipt(token).exchangeRate();
-        uint lastUpdate = IERC20Receipt(token).lastUpdate();
-        return abi.encode((user, exchangeRate, lastUpdate), (address, uint, uint));
-    }
-
-    function _onTokenReceived(address user, uint amount) internal override {
-        IERC20Receipt(address(token)).mint(user, amount);
-    }
-
-    function _onReceiveUpdate(uint updateRate, uint updateTime) internal override {
-        IERC20Receipt(address(token)).updateExchangeRate(updateRate, updateTime);
-    }
-
-    function _onSendToken(uint amount) internal override {
-        token.transferFrom(msg.sender, address(this), amount);
-        IERC20Receipt(address(token)).burn(amount);
-    }
-
 }
 
