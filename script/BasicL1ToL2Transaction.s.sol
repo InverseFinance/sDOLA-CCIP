@@ -30,7 +30,7 @@ contract BasicL1ToL2Transaction is Script {
         token.drip(address(tokenBridge));
         //token.transfer(address(tokenBridge), 0.01 ether);
         tokenBridge.setExchangeRate(1 ether + 1);
-        tokenBridge.sendMessagePayNative(l2ChainSelector, l2Bridge, owner, address(token), 0.09 ether);
+        tokenBridge.sendMessagePayNative(l2ChainSelector, l2Bridge, owner, 0.09 ether);
 
     }
 }

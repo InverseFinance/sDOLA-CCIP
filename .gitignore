@@ -14,5 +14,8 @@ docs/
 # Dotenv file
 .env
 
+# Bash scripts
+*.sh
+
 # Node modules
 node_modules/

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// Based on the Chainlink ProgrammableTokenTransfers contract
 pragma solidity 0.8.19;
 
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
@@ -22,14 +23,7 @@ interface IExchangeRateProvider {
     function setLastUpdate(uint) external returns(bool);
 }
 
-/**
- * THIS IS AN EXAMPLE CONTRACT THAT USES HARDCODED VALUES FOR CLARITY.
- * THIS IS AN EXAMPLE CONTRACT THAT USES UN-AUDITED CODE.
- * DO NOT USE THIS CODE IN PRODUCTION.
- */
-
-/// @title - A simple messenger contract for transferring/receiving tokens and data across chains.
-/// @dev - This example shows how to recover tokens in case of revert
+/// @title - A messenger contract for transferring tokens and data across chains.
 contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     using EnumerableMap for EnumerableMap.Bytes32ToUintMap;
 
@@ -106,6 +100,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     mapping(address => bool) public allowlistedSenders;
 
     IERC20 private s_linkToken;
+    IERC20 public token;
 
     // The message contents of failed messages are stored here.
     mapping(bytes32 messageId => Client.Any2EVMMessage contents)
@@ -122,8 +117,9 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     /// @param _link The address of the link contract.
     /// @param _exchangeRateProvider The address of the exchange rate contract.
     /// @param _isCanonical Boolean indicating whether or not this bridge exists on the canonical sDOLA chain
-    constructor(address _router, address _link, address _exchangeRateProvider, bool _isCanonical) CCIPReceiver(_router) {
+    constructor(address _router, address _token, address _link, address _exchangeRateProvider, bool _isCanonical) CCIPReceiver(_router) {
         s_linkToken = IERC20(_link);
+        token = IERC20(_token);
         isCanonical = _isCanonical;
         exchangeRateProvider = _exchangeRateProvider;
     }
@@ -195,14 +191,12 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     /// @dev Assumes your contract has sufficient LINK to pay for CCIP fees.
     /// @param _destinationChainSelector The identifier (aka selector) for the destination blockchain.
     /// @param _receiver The address of the recipient on the destination blockchain.
-    /// @param _token token address.
     /// @param _amount token amount.
     /// @return messageId The ID of the CCIP message that was sent.
     function sendMessagePayLINK(
         uint64 _destinationChainSelector,
         address _receiverContract,
         address _receiver,
-        address _token,
         uint256 _amount
     )
         external
@@ -216,7 +210,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         Client.EVM2AnyMessage memory evm2AnyMessage = _buildCCIPMessage(
             _receiverContract,
             _receiver,
-            _token,
+            address(token),
             _amount,
             address(s_linkToken)
         );
@@ -234,7 +228,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         s_linkToken.approve(address(router), fees);
 
         // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
-        IERC20(_token).approve(address(router), _amount);
+        token.approve(address(router), _amount);
 
         // Send the message through the router and store the returned message ID
         messageId = router.ccipSend(_destinationChainSelector, evm2AnyMessage);
@@ -247,7 +241,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             _receiver,
             block.timestamp,
             s_lastReceivedExchangeRate,
-            _token,
+            address(token),
             _amount,
             address(s_linkToken),
             fees
@@ -262,19 +256,17 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     /// @dev Assumes your contract has sufficient native gas like ETH on Ethereum or MATIC on Polygon.
     /// @param _destinationChainSelector The identifier (aka selector) for the destination blockchain.
     /// @param _receiverContract The address of the recipient contract on the destination blockchain.
-    /// @param _token token address.
     /// @param _amount token amount.
     /// @return messageId The ID of the CCIP message that was sent.
     function sendMessagePayNative(
         uint64 _destinationChainSelector,
         address _receiverContract,
-        address _token,
         uint256 _amount
     )
         public
         returns (bytes32 messageId)
     {
-        return sendMessagePayNative(_destinationChainSelector, _receiverContract, msg.sender, _token, _amount);
+        return sendMessagePayNative(_destinationChainSelector, _receiverContract, msg.sender, _amount);
     }
 
     /// @notice Sends data and transfer tokens to receiver on the destination chain.
@@ -283,14 +275,12 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     /// @param _destinationChainSelector The identifier (aka selector) for the destination blockchain.
     /// @param _receiverContract The address of the recipient contract on the destination blockchain.
     /// @param _receiver The address to send tokens to
-    /// @param _token token address.
     /// @param _amount token amount.
     /// @return messageId The ID of the CCIP message that was sent.
     function sendMessagePayNative(
         uint64 _destinationChainSelector,
         address _receiverContract,
         address _receiver,
-        address _token,
         uint256 _amount
     )
         public
@@ -304,7 +294,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         Client.EVM2AnyMessage memory evm2AnyMessage = _buildCCIPMessage(
             _receiverContract,
             _receiver,
-            _token,
+            address(token),
             _amount,
             address(0)
         );
@@ -319,7 +309,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             revert NotEnoughBalance(address(this).balance, fees);
 
         // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
-        IERC20(_token).approve(address(router), _amount);
+        token.approve(address(router), _amount);
 
         // Send the message through the router and store the returned message ID
         messageId = router.ccipSend{value: fees}(
@@ -335,7 +325,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             _receiver,
             block.timestamp,
             s_lastReceivedExchangeRate,
-            _token,
+            address(token),
             _amount,
             address(0),
             fees
