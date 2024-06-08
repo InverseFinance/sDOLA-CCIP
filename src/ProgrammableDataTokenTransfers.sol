@@ -446,9 +446,6 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             abi.decode(any2EvmMessage.sender, (address))
         ) // Make sure the source chain and sender are allowlisted
     {
-        // Simulate a revert for testing purposes
-        if (s_simRevert) revert ErrorCase();
-
         _ccipReceive(any2EvmMessage); // process the message - may revert as well
     }
 
@@ -480,13 +477,6 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
 
         // Emit an event indicating that the message has been recovered.
         emit MessageRecovered(messageId);
-    }
-
-    /// @notice Allows the owner to toggle simulation of reversion for testing purposes.
-    /// @param simRevert If `true`, simulates a revert condition; if `false`, disables the simulation.
-    /// @dev This function is only callable by the contract owner.
-    function setSimRevert(bool simRevert) external onlyOwner {
-        s_simRevert = simRevert;
     }
 
     function _ccipReceive(

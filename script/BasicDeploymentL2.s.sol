@@ -11,7 +11,7 @@ contract BasicDeploymentL2 is Script {
     address owner=0x11EC78492D53c9276dD7a184B1dbfB34E50B710D;
     address router=0x2a9C5afB0d0e4BAb2BCdaE109EC4b0c4Be15a165;
     address link=0x143E1dAE4F018ff86051a01D44a1B49B13704056;
-    address l1Sender=0x15E4613fF3f0818B25EE8647AB5B0679945e714e;
+    address l1Sender=0x1235a67977dE268E4aB0105ea104182244731c0a;
     address token=0xA8C0c11bf64AF62CDCA6f93D3769B88BdD7cb93D;
     uint64 l1ChainSelector=16015286601757825753;
 

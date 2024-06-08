@@ -13,9 +13,9 @@ contract BasicL1ToL2Transaction is Script {
     address owner=0x11EC78492D53c9276dD7a184B1dbfB34E50B710D;
     address link = 0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
     IDripable token = IDripable(0x466D489b6d36E7E3b824ef491C225F5830E81cC1);
-    ProgrammableDataTokenTransfers tokenBridge = ProgrammableDataTokenTransfers(payable(0x15E4613fF3f0818B25EE8647AB5B0679945e714e));
+    ProgrammableDataTokenTransfers tokenBridge = ProgrammableDataTokenTransfers(payable(0x1235a67977dE268E4aB0105ea104182244731c0a));
     uint64 l2ChainSelector=3478487238524512106;
-    address l2Bridge=0xab4AE477899fD61B27744B4DEbe8990C66c81C22;
+    address l2Bridge=0xc761ebD4e2bD6Cc171CbfB29E81BC9819E7f2a16;
 
     function run() external {
         require(address(tokenBridge) != address(0));
