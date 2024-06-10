@@ -6,7 +6,7 @@ import {ProgrammableDataTokenTransfers} from "src/ProgrammableDataTokenTransfers
 import {ExchangeRateProvider} from "src/ExchangeRateProvider.sol";
 
 
-contract BasicDeploymentL2 is Script {
+contract DeployL2 is Script {
     
     address owner=0x11EC78492D53c9276dD7a184B1dbfB34E50B710D;
     address router=0x2a9C5afB0d0e4BAb2BCdaE109EC4b0c4Be15a165;

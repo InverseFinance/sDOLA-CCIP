@@ -9,7 +9,7 @@ interface IDripable is IERC20{
     function drip(address to) external;
 }
 
-contract BasicL1ToL2Transaction is Script {
+contract L1ToL2Tx is Script {
     
     address owner=0x11EC78492D53c9276dD7a184B1dbfB34E50B710D;
     address link = 0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
