@@ -58,8 +58,8 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         uint64 indexed destinationChainSelector, // The chain selector of the destination chain.
         address receiverContract, // The address of the receiver contract on the destination chain.
         address receiver, //The final receiver of sent tokens
-        uint timestamp, // The timestamp being sent.
-        uint exchangeRate, // The exchange rate that was sent
+        uint256 timestamp, // The timestamp being sent.
+        uint256 exchangeRate, // The exchange rate that was sent
         address token, // The token address that was transferred.
         uint256 tokenAmount, // The token amount that was transferred.
         address feeToken, // the token address used to pay CCIP fees.
@@ -72,8 +72,8 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         uint64 indexed sourceChainSelector, // The chain selector of the source chain.
         address sender, // The address of the sender from the source chain.
         address receiver, //The final receiver of sent tokens.
-        uint timestamp, // The timestamp that was received.
-        uint exchangeRate, // The exchange rate that was received.
+        uint256 timestamp, // The timestamp that was received.
+        uint256 exchangeRate, // The exchange rate that was received.
         address token, // The token address that was transferred.
         uint256 tokenAmount // The token amount that was transferred.
     );
@@ -98,6 +98,9 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
 
     // Mapping to keep track of allowlisted senders.
     mapping(address => bool) public allowlistedSenders;
+
+    // Mapping to keep track of when another network was last updated.
+    mapping(uint64 => uint256) public lastUpdate;
 
     IERC20 private s_linkToken;
     IERC20 public token;
@@ -215,6 +218,9 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             address(s_linkToken)
         );
 
+        //Update the last time this network had its price updated
+        lastUpdate[_destinationChainSelector] = block.timestamp;
+
         // Initialize a router client instance to interact with cross-chain router
         IRouterClient router = IRouterClient(this.getRouter());
 
@@ -298,6 +304,10 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             _amount,
             address(0)
         );
+
+        //Update the last time this network had its price updated
+        lastUpdate[_destinationChainSelector] = getLastUpdate();
+
 
         // Initialize a router client instance to interact with cross-chain router
         IRouterClient router = IRouterClient(this.getRouter());
@@ -541,15 +551,15 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         return evm2AnyMessage;
     }
 
-    function getExchangeRate() public view returns(uint exchangeRate){
+    function getExchangeRate() public view returns(uint256 exchangeRate){
             exchangeRate = IExchangeRateProvider(exchangeRateProvider).exchangeRate();
     }
 
-    function getLastUpdate() public view returns(uint lastUpdate) {
+    function getLastUpdate() public view returns(uint256) {
         if(isCanonical){
-            lastUpdate = block.timestamp;
+            return block.timestamp;
         } else {
-            lastUpdate = IExchangeRateProvider(exchangeRateProvider).lastUpdate();
+            return IExchangeRateProvider(exchangeRateProvider).lastUpdate();
         }
     }
 
