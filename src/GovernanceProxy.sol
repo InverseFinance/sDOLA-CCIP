@@ -6,11 +6,6 @@ import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/O
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
 
-/**
- * THIS IS AN EXAMPLE CONTRACT THAT USES HARDCODED VALUES FOR CLARITY.
- * THIS IS AN EXAMPLE CONTRACT THAT USES UN-AUDITED CODE.
- * DO NOT USE THIS CODE IN PRODUCTION.
- */
 
 /// @title - A simple receiver contract for receiving addresses and calldata, then calling them
 contract GovernanceProxy is CCIPReceiver, OwnerIsCreator {
@@ -27,11 +22,9 @@ contract GovernanceProxy is CCIPReceiver, OwnerIsCreator {
         bytes32 indexed messageId, // The unique ID of the CCIP message.
         uint64 indexed sourceChainSelector, // The chain selector of the source chain.
         address sender, // The address of the sender from the source chain.
-        address target // The text that was received.
+        address target, // The text that was received.
+        bool success // Whether or not execution of the received message was a success
     );
-
-    bytes32 private s_lastReceivedMessageId; // Store the last received messageId.
-    bool private s_lastSuccess;
 
     // Chainlink Chainselector of the allowed source chain
     uint64 allowedSourceChain;
@@ -56,7 +49,7 @@ contract GovernanceProxy is CCIPReceiver, OwnerIsCreator {
         _;
     }
 
-    /// handle a received message
+    ///@notice Handle a received message and call the defined function in the provided address with the provided call data
     function _ccipReceive(
         Client.Any2EVMMessage memory any2EvmMessage
     )
@@ -67,27 +60,16 @@ contract GovernanceProxy is CCIPReceiver, OwnerIsCreator {
             abi.decode(any2EvmMessage.sender, (address))
         ) // Make sure source chain and sender are allowed
     {
-        s_lastReceivedMessageId = any2EvmMessage.messageId; // fetch the messageId
         (address targetContract, bytes memory callData) = abi.decode(any2EvmMessage.data, ((address), (bytes))); // abi-decoding of the sent text
-        (s_lastSuccess,) = targetContract.call(callData);
+        (bool success,) = targetContract.call(callData);
 
         emit MessageReceived(
             any2EvmMessage.messageId,
             any2EvmMessage.sourceChainSelector, // fetch the source chain identifier (aka selector)
             abi.decode(any2EvmMessage.sender, (address)), // abi-decoding of the sender address,
-            targetContract
+            targetContract,
+            success
         );
-    }
-
-    /// @notice Fetches the details of the last received message.
-    /// @return messageId The ID of the last received message.
-    function getLastReceivedMessageDetails()
-        external
-        view
-        returns (bytes32 messageId,
-                bool lastSuccess)
-    {
-        return (s_lastReceivedMessageId, s_lastSuccess);
     }
 
     /// @notice Fallback function to allow the contract to receive Ether.

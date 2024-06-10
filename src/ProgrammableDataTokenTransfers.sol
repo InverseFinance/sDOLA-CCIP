@@ -83,12 +83,6 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
 
     bool public isCanonical; // Indicate whether or not the contract exists on the same chain as the main sDOLA contract
     address public exchangeRateProvider; //Address to call for sDOLA exchange rate reads and updates
-    bytes32 private s_lastReceivedMessageId; // Store the last received messageId.
-    address private s_lastReceivedTokenAddress; // Store the last received token address.
-    uint256 private s_lastReceivedTokenAmount; // Store the last received amount.
-    uint256 private s_lastReceivedTimestamp; // Store the last received timestamp.
-    uint256 private s_lastReceivedExchangeRate; //Store the last received exchange rate
-    address private s_lastReceiver; //Store the last receiver of tokens
 
     // Mapping to keep track of allowlisted destination chains.
     mapping(uint64 => bool) public allowlistedDestinationChains;
@@ -111,9 +105,6 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
 
     // Contains failed messages and their state.
     EnumerableMap.Bytes32ToUintMap internal s_failedMessages;
-
-    // This is used to simulate a revert in the processMessage function.
-    bool internal s_simRevert = false;
 
     /// @notice Constructor initializes the contract with the router address.
     /// @param _router The address of the router contract.
@@ -246,7 +237,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             _receiverContract,
             _receiver,
             block.timestamp,
-            s_lastReceivedExchangeRate,
+            getExchangeRate(),
             address(token),
             _amount,
             address(s_linkToken),
@@ -334,7 +325,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             _receiverContract,
             _receiver,
             block.timestamp,
-            s_lastReceivedExchangeRate,
+            getExchangeRate(),
             address(token),
             _amount,
             address(0),
@@ -343,38 +334,6 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
 
         // Return the message ID
         return messageId;
-    }
-
-    /**
-     * @notice Returns the details of the last CCIP received message.
-     * @dev This function retrieves the ID, timestamp, token address, and token amount of the last received CCIP message.
-     * @return messageId The ID of the last received CCIP message.
-     * @return timestamp The timestamp of the last received CCIP message.
-     * @return exchangeRate The exchangeRate of the last received CCIP message.
-     * @return receiver The last address to receive tokens.
-     * @return tokenAddress The address of the token in the last CCIP received message.
-     * @return tokenAmount The amount of the token in the last CCIP received message.
-     */
-    function getLastReceivedMessageDetails()
-        public
-        view
-        returns (
-            bytes32 messageId,
-            uint timestamp,
-            uint exchangeRate,
-            address receiver,
-            address tokenAddress,
-            uint256 tokenAmount
-        )
-    {
-        return (
-            s_lastReceivedMessageId,
-            s_lastReceivedTimestamp,
-            s_lastReceivedExchangeRate,
-            s_lastReceiver,
-            s_lastReceivedTokenAddress,
-            s_lastReceivedTokenAmount
-        );
     }
 
     /**
@@ -492,11 +451,10 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     function _ccipReceive(
         Client.Any2EVMMessage memory any2EvmMessage
     ) internal override {
-        s_lastReceivedMessageId = any2EvmMessage.messageId; // fetch the messageId
-        (s_lastReceivedTimestamp, s_lastReceivedExchangeRate, s_lastReceiver) = abi.decode(any2EvmMessage.data, (uint, uint, address)); // abi-decoding of the sent timestamp and exchangerate
+        (uint256 s_lastReceivedTimestamp, uint256 s_lastReceivedExchangeRate, address s_lastReceiver) = abi.decode(any2EvmMessage.data, (uint, uint, address)); // abi-decoding of the sent timestamp and exchangerate
         // Expect one token to be transferred at once, but you can transfer several tokens.
-        s_lastReceivedTokenAddress = any2EvmMessage.destTokenAmounts[0].token;
-        s_lastReceivedTokenAmount = any2EvmMessage.destTokenAmounts[0].amount;
+        address s_lastReceivedTokenAddress = any2EvmMessage.destTokenAmounts[0].token;
+        uint256 s_lastReceivedTokenAmount = any2EvmMessage.destTokenAmounts[0].amount;
         IERC20(s_lastReceivedTokenAddress).transfer(s_lastReceiver, s_lastReceivedTokenAmount);
         if(!isCanonical){
             IExchangeRateProvider(exchangeRateProvider).setExchangeRate(s_lastReceivedExchangeRate);
@@ -551,10 +509,16 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         return evm2AnyMessage;
     }
 
+    /// @notice Get exchange rate from the associated exchange rate provider
+    /// @return exchangeRate The exchange rate last recorded in the exchangerate provider
+    /// @dev On mainnet this will always return a fresh price, whereas on L2s it will be lagging
     function getExchangeRate() public view returns(uint256 exchangeRate){
             exchangeRate = IExchangeRateProvider(exchangeRateProvider).exchangeRate();
     }
 
+    /// @notice Get last update timestamp of the exchange rate
+    /// @return The timestamp of the last exchange rate update
+    /// @dev This time will always be the block timestamp on mainnet, whereas on L2s it will be lagging
     function getLastUpdate() public view returns(uint256) {
         if(isCanonical){
             return block.timestamp;
@@ -601,11 +565,6 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         if (amount == 0) revert NothingToWithdraw();
 
         IERC20(_token).transfer(_beneficiary, amount);
-    }
-
-    //TODO: Testing function. Remove in prod.
-    function setExchangeRate(uint newExchangeRate) external {
-        s_lastReceivedExchangeRate = newExchangeRate;
     }
 }
 
