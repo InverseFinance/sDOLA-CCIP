@@ -1,3 +1,4 @@
+import {ExchangeRateProvider} from "src/ExchangeRateProvider.sol";
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity >=0.8.0;
 
@@ -5,7 +6,7 @@ pragma solidity >=0.8.0;
 /// @author Solmate (https://github.com/transmissions11/solmate/blob/main/src/tokens/ERC20.sol)
 /// @author Modified from Uniswap (https://github.com/Uniswap/uniswap-v2-core/blob/master/contracts/UniswapV2ERC20.sol)
 /// @dev Do not manually set balances without updating totalSupply, as the sum of all user balances must not exceed it.
-contract ERC20Mintable {
+contract ERC20Mintable is ExchangeRateProvider{
     /*//////////////////////////////////////////////////////////////
                                  EVENTS
     //////////////////////////////////////////////////////////////*/
@@ -16,7 +17,7 @@ contract ERC20Mintable {
 
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
-    event SetOperator(address operator, bool isOperator);
+    event SetMinter(address minter, bool isMinter);
 
     /*//////////////////////////////////////////////////////////////
                             METADATA STORAGE
@@ -33,10 +34,6 @@ contract ERC20Mintable {
     //////////////////////////////////////////////////////////////*/
 
     uint256 public totalSupply;
-
-    uint256 public exchangeRate;
-
-    uint256 public lastUpdate;
 
     mapping(address => uint256) public balanceOf;
 
@@ -56,11 +53,7 @@ contract ERC20Mintable {
                                 ADMIN
     //////////////////////////////////////////////////////////////*/
     
-    address public admin;
-
-    address public pendingAdmin;
-
-    mapping(address => bool) public operators;
+    mapping(address => bool) public minters;
 
     /*//////////////////////////////////////////////////////////////
                                CONSTRUCTOR
@@ -69,13 +62,11 @@ contract ERC20Mintable {
     constructor(
         string memory _name,
         string memory _symbol,
-        address _admin,
         uint8 _decimals
     ) {
         name = _name;
         symbol = _symbol;
         decimals = _decimals;
-        admin = _admin;
 
         INITIAL_CHAIN_ID = block.chainid;
         INITIAL_DOMAIN_SEPARATOR = computeDomainSeparator();
@@ -201,41 +192,19 @@ contract ERC20Mintable {
     //////////////////////////////////////////////////////////////*/
     
     function mint(address to, uint256 amount) external {
-        require(operators[msg.sender], "msg.sender not operator");
+        require(minters[msg.sender], "msg.sender not minter");
         _mint(to, amount);
     }
 
     function burn(uint256 amount) external {
-        require(operators[msg.sender], "msg.sender not operator");
+        require(minters[msg.sender], "msg.sender not minter");
         _burn(address(msg.sender), amount);
     }
 
-    function updateExchangeRate(uint256 _exchangeRate, uint256 _update) external {
-        require(operators[msg.sender], "msg.sender not operator");
-        if(_exchangeRate > exchangeRate && _update >= lastUpdate) {
-            exchangeRate = _exchangeRate;
-            lastUpdate = _update;
-            emit UpdateExchangeRate(_exchangeRate, _update);
-        }
+    function setMinter(address minter, bool isMinter) onlyOwner external {
+        minters[minter] = isMinter;
+        emit SetMinter(minter, isMinter);
     }
-
-    function setOperator(address operator, bool isOperator) external {
-        require(msg.sender == admin, "msg.sender not admin");
-        operators[operator] = isOperator;
-        emit SetOperator(operator, isOperator);
-    }
-
-    function transferAdmin(address newAdmin) external {
-        require(msg.sender == admin, "msg.sender not admin");
-        pendingAdmin = newAdmin;
-    }
-
-    function acceptAdmin() external {
-        require(msg.sender == pendingAdmin, "msg.sender not pending admin");
-        admin = pendingAdmin;
-        pendingAdmin = address(0);
-    }
-
 
     /*//////////////////////////////////////////////////////////////
                         INTERNAL MINT/BURN LOGIC

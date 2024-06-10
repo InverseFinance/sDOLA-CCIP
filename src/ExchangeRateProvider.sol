@@ -13,6 +13,7 @@ contract ExchangeRateProvider is IExchangeRateProvider{
     uint _exchangeRate;
     uint _lastUpdate;
     address public owner;
+    address public pendingOwner;
     mapping(address => bool) public updaters;
 
     constructor() {
@@ -26,6 +27,11 @@ contract ExchangeRateProvider is IExchangeRateProvider{
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only owner");
+        _;
+    }
+
+    modifier onlyPendingOwner() {
+        require(msg.sender == pendingOwner, "Only pending owner");
         _;
     }
 
@@ -59,8 +65,13 @@ contract ExchangeRateProvider is IExchangeRateProvider{
         updaters[updater] = isUpdater;
     }
 
-    function setOwner(address newOwner) external onlyOwner {
-        owner = newOwner;
+    function setPendingOwner(address newPendingOwner) external onlyOwner {
+        pendingOwner = newPendingOwner;
+    }
+
+    function acceptOwner() external onlyPendingOwner {
+        owner = pendingOwner;
+        pendingOwner = address(0);
     }
 }
 
