@@ -82,6 +82,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     event MessageRecovered(bytes32 indexed messageId);
 
     bool public isCanonical; // Indicate whether or not the contract exists on the same chain as the main sDOLA contract
+    uint public additionalGasLimit; //The additional gas limit used for calling contract functions on the receiving network 
     address public exchangeRateProvider; //Address to call for sDOLA exchange rate reads and updates
 
     // Mapping to keep track of allowlisted destination chains.
@@ -194,7 +195,6 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         uint256 _amount
     )
         external
-        onlyOwner
         onlyAllowlistedDestinationChain(_destinationChainSelector)
         validateReceiver(_receiverContract)
         returns (bytes32 messageId)
@@ -218,11 +218,17 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         // Get the fee required to send the CCIP message
         uint256 fees = router.getFee(_destinationChainSelector, evm2AnyMessage);
 
+        // Transfer link tokens from sender to contract
+        s_linkToken.transferFrom(msg.sender, address(this), fees);
+
         if (fees > s_linkToken.balanceOf(address(this)))
             revert NotEnoughBalance(s_linkToken.balanceOf(address(this)), fees);
 
         // approve the Router to transfer LINK tokens on contract's behalf. It will spend the fees in LINK
         s_linkToken.approve(address(router), fees);
+
+        // Transfer sender tokens to contract from msg.sender
+        token.transferFrom(msg.sender, address(this), _amount);
 
         // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
         token.approve(address(router), _amount);
@@ -261,6 +267,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         uint256 _amount
     )
         public
+        payable
         returns (bytes32 messageId)
     {
         return sendMessagePayNative(_destinationChainSelector, _receiverContract, msg.sender, _amount);
@@ -281,7 +288,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         uint256 _amount
     )
         public
-        onlyOwner
+        payable
         onlyAllowlistedDestinationChain(_destinationChainSelector)
         validateReceiver(_receiverContract)
         returns (bytes32 messageId)
@@ -309,6 +316,9 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         if (fees > address(this).balance)
             revert NotEnoughBalance(address(this).balance, fees);
 
+        // Transfer sender tokens to contract from msg.sender
+        token.transferFrom(msg.sender, address(this), _amount);
+
         // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
         token.approve(address(router), _amount);
 
@@ -331,6 +341,11 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             address(0),
             fees
         );
+
+        //If contract has excess eth, return it to sender
+        if(address(this).balance > 0){
+            payable(msg.sender).transfer(address(this).balance);
+        }
 
         // Return the message ID
         return messageId;
@@ -501,7 +516,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             tokenAmounts: tokenAmounts, // The amount and type of token being transferred
             extraArgs: Client._argsToBytes(
                 // Additional arguments, setting gas limit
-                Client.EVMExtraArgsV1({gasLimit: 400_000})
+                Client.EVMExtraArgsV1({gasLimit: additionalGasLimit})
             ),
             // Set the feeToken to a feeTokenAddress, indicating specific asset will be used for fees
             feeToken: _feeTokenAddress
@@ -532,22 +547,11 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     /// It is automatically called when Ether is sent to the contract without any data.
     receive() external payable {}
 
-    /// @notice Allows the contract owner to withdraw the entire balance of Ether from the contract.
-    /// @dev This function reverts if there are no funds to withdraw or if the transfer fails.
-    /// It should only be callable by the owner of the contract.
-    /// @param _beneficiary The address to which the Ether should be sent.
-    function withdraw(address _beneficiary) public onlyOwner {
-        // Retrieve the balance of this contract
-        uint256 amount = address(this).balance;
-
-        // Revert if there is nothing to withdraw
-        if (amount == 0) revert NothingToWithdraw();
-
-        // Attempt to send the funds, capturing the success status and discarding any return data
-        (bool sent, ) = _beneficiary.call{value: amount}("");
-
-        // Revert if the send failed, with information about the attempted transfer
-        if (!sent) revert FailedToWithdrawEth(msg.sender, _beneficiary, amount);
+    /// @notice Set the additional gas limit passed along to the receiver of messages
+    /// @dev This is used to call contract functions on L2s, most importantly
+    /// @param newAdditionalGasLimit The new additional gas limit.
+    function setAdditionalGasLimit(uint newAdditionalGasLimit) external onlyOwner {
+        additionalGasLimit = newAdditionalGasLimit;
     }
 
     /// @notice Allows the owner of the contract to withdraw all tokens of a specific ERC20 token.
