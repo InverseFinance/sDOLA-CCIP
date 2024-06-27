@@ -31,7 +31,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     error NotEnoughBalance(uint256 currentBalance, uint256 calculatedFees); // Used to make sure contract has enough balance to cover the fees.
     error NothingToWithdraw(); // Used when trying to withdraw Ether but there's nothing to withdraw.
     error FailedToWithdrawEth(address owner, address target, uint256 value); // Used when the withdrawal of Ether fails.
-    error DestinationChainNotAllowlisted(uint64 destinationChainSelector); // Used when the destination chain has not been allowlisted by the contract owner.
+    error DestinationChainNotAllowed(uint64 destinationChainSelector); // Used when the destination chain has not been allowlisted by the contract owner.
     error SourceChainNotAllowed(uint64 sourceChainSelector); // Used when the source chain has not been allowlisted by the contract owner.
     error SenderNotAllowed(address sender); // Used when the sender has not been allowlisted by the contract owner.
     error InvalidReceiverAddress(); // Used when the receiver address is 0.
@@ -123,7 +123,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     /// @param _destinationChainSelector The selector of the destination chain.
     modifier onlyAllowlistedDestinationChain(uint64 _destinationChainSelector) {
         if (!allowlistedDestinationChains[_destinationChainSelector])
-            revert DestinationChainNotAllowlisted(_destinationChainSelector);
+            revert DestinationChainNotAllowed(_destinationChainSelector);
         _;
     }
 
@@ -306,19 +306,18 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
         //Update the last time this network had its price updated
         lastUpdate[_destinationChainSelector] = getLastUpdate();
 
-
         // Initialize a router client instance to interact with cross-chain router
         IRouterClient router = IRouterClient(this.getRouter());
-
+        
         // Get the fee required to send the CCIP message
         uint256 fees = router.getFee(_destinationChainSelector, evm2AnyMessage);
-
+        
         if (fees > address(this).balance)
             revert NotEnoughBalance(address(this).balance, fees);
-
+        
         // Transfer sender tokens to contract from msg.sender
         token.transferFrom(msg.sender, address(this), _amount);
-
+        
         // approve the Router to spend tokens on contract's behalf. It will spend the amount of the given token
         token.approve(address(router), _amount);
 
@@ -327,6 +326,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             _destinationChainSelector,
             evm2AnyMessage
         );
+        
 
         // Emit an event with message details
         emit MessageSent(
@@ -468,9 +468,8 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     ) internal override {
         (uint256 s_lastReceivedTimestamp, uint256 s_lastReceivedExchangeRate, address s_lastReceiver) = abi.decode(any2EvmMessage.data, (uint, uint, address)); // abi-decoding of the sent timestamp and exchangerate
         // Expect one token to be transferred at once, but you can transfer several tokens.
-        address s_lastReceivedTokenAddress = any2EvmMessage.destTokenAmounts[0].token;
         uint256 s_lastReceivedTokenAmount = any2EvmMessage.destTokenAmounts[0].amount;
-        IERC20(s_lastReceivedTokenAddress).transfer(s_lastReceiver, s_lastReceivedTokenAmount);
+        token.transfer(s_lastReceiver, s_lastReceivedTokenAmount);
         if(!isCanonical){
             IExchangeRateProvider(exchangeRateProvider).setExchangeRate(s_lastReceivedExchangeRate);
             IExchangeRateProvider(exchangeRateProvider).setLastUpdate(s_lastReceivedTimestamp);
@@ -482,8 +481,8 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
             s_lastReceiver,
             s_lastReceivedTimestamp,
             s_lastReceivedExchangeRate,
-            any2EvmMessage.destTokenAmounts[0].token,
-            any2EvmMessage.destTokenAmounts[0].amount
+            address(token),
+            s_lastReceivedTokenAmount
         );
     }
 
@@ -528,7 +527,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     /// @return exchangeRate The exchange rate last recorded in the exchangerate provider
     /// @dev On mainnet this will always return a fresh price, whereas on L2s it will be lagging
     function getExchangeRate() public view returns(uint256 exchangeRate){
-            exchangeRate = IExchangeRateProvider(exchangeRateProvider).exchangeRate();
+        exchangeRate = IExchangeRateProvider(exchangeRateProvider).exchangeRate();
     }
 
     /// @notice Get last update timestamp of the exchange rate

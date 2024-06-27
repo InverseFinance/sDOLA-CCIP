@@ -36,12 +36,10 @@ contract ExchangeRateProvider is IExchangeRateProvider{
     }
 
     function exchangeRate() external view returns(uint){
-        require(_exchangeRate > 0, "No update");
         return _exchangeRate;
     }
 
     function lastUpdate() external view returns(uint){
-        require(_lastUpdate > 0, "No update");
         return _lastUpdate;
     }
 
