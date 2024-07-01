@@ -11,7 +11,7 @@ contract DeployL2 is Script {
     address owner=0x11EC78492D53c9276dD7a184B1dbfB34E50B710D;
     address router=0x2a9C5afB0d0e4BAb2BCdaE109EC4b0c4Be15a165;
     address link=0x143E1dAE4F018ff86051a01D44a1B49B13704056;
-    address l1Sender=0x4b09061CA23a820fb629041008EE99b4180918f5;
+    address l1Sender=0xE5f24791E273Cb96A1f8E5B67Bc2397F0AD9B8B4;
     address token=0xA8C0c11bf64AF62CDCA6f93D3769B88BdD7cb93D;
     uint64 l1ChainSelector=16015286601757825753;
 
@@ -29,6 +29,7 @@ contract DeployL2 is Script {
         ProgrammableDataTokenTransfers bridge = new ProgrammableDataTokenTransfers(router, token, link, address(erp), false);
         erp.setUpdater(address(bridge), true);
         bridge.allowlistSourceChain(l1ChainSelector, true);
+        bridge.allowlistDestinationChain(l1ChainSelector, true);
         bridge.allowlistSender(l1Sender, true);
     }
 }

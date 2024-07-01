@@ -13,15 +13,15 @@ contract L1ToL2Tx is Script {
     
     address owner=0x11EC78492D53c9276dD7a184B1dbfB34E50B710D;
     address link = 0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
-    IDripable token = IDripable(0x466D489b6d36E7E3b824ef491C225F5830E81cC1);
-    ProgrammableDataTokenTransfers tokenBridge = ProgrammableDataTokenTransfers(payable(0xE5f24791E273Cb96A1f8E5B67Bc2397F0AD9B8B4));
-    ExchangeRateProvider erp = ExchangeRateProvider(0xEc51E66c1e1BFc85aCc3b6847820A3Ff0a38364b);
-    uint64 l2ChainSelector=3478487238524512106;
-    address l2Bridge=0x93685185666c8D34ad4c574B3DBF41231bbfB31b;
+    IDripable token = IDripable(address(0));
+    ProgrammableDataTokenTransfers tokenBridge = ProgrammableDataTokenTransfers(payable(0x5C16aE212f8d721FAb74164d1039d4514b11DB54));
+    ExchangeRateProvider erp = ExchangeRateProvider(0xEd704C24729Ff0904a6180459dda1A5B3789F742);
+    uint64 l1ChainSelector=0;
+    address l1Bridge=0x53d0D1add4e89E82fE872646830240F5feC477De;
 
     function run() external {
         require(address(tokenBridge) != address(0));
-        require(l2Bridge != address(0));
+        require(l1Bridge != address(0));
         string memory testnetL2RPC = vm.envString("RPC_MAINNET_SEPOLIA");
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
       
@@ -31,10 +31,9 @@ contract L1ToL2Tx is Script {
         payable(tokenBridge).transfer(0.1 ether);
         token.drip(0x11EC78492D53c9276dD7a184B1dbfB34E50B710D);
         token.approve(address(tokenBridge), 1 ether);
-        erp.setExchangeRate(3 ether);
-        tokenBridge.allowlistSourceChain(l2ChainSelector, true);
-        tokenBridge.allowlistSender(l2Bridge, true);
-        tokenBridge.sendMessagePayNative(l2ChainSelector, l2Bridge, owner, 0.09 ether);
+        tokenBridge.allowlistSourceChain(l1ChainSelector, true);
+        tokenBridge.allowlistSender(l1Bridge, true);
+        tokenBridge.sendMessagePayNative(l1ChainSelector, l1Bridge, owner, 0.09 ether);
 
     }
 }
