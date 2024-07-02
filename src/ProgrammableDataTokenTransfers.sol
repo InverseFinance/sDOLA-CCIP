@@ -82,7 +82,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     event MessageRecovered(bytes32 indexed messageId);
 
     bool public isCanonical; // Indicate whether or not the contract exists on the same chain as the main sDOLA contract
-    uint public additionalGasLimit; //The additional gas limit used for calling contract functions on the receiving network 
+    uint public additionalGasLimit = 400_000; //The additional gas limit used for calling contract functions on the receiving network 
     address public exchangeRateProvider; //Address to call for sDOLA exchange rate reads and updates
 
     // Mapping to keep track of allowlisted destination chains.

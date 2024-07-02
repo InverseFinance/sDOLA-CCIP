@@ -11,8 +11,8 @@ contract DeployL2 is Script {
     address owner=0x11EC78492D53c9276dD7a184B1dbfB34E50B710D;
     address router=0x2a9C5afB0d0e4BAb2BCdaE109EC4b0c4Be15a165;
     address link=0x143E1dAE4F018ff86051a01D44a1B49B13704056;
-    address l1Sender=0xE5f24791E273Cb96A1f8E5B67Bc2397F0AD9B8B4;
-    address token=0xA8C0c11bf64AF62CDCA6f93D3769B88BdD7cb93D;
+    address l1Sender=0x52FFD313cc11882b75879C41d837b20F974ea88f;
+    address token=0x139E99f0ab4084E14e6bb7DacA289a91a2d92927;
     uint64 l1ChainSelector=16015286601757825753;
 
 
