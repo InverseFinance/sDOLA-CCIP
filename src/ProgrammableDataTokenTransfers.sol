@@ -23,7 +23,7 @@ interface IExchangeRateProvider {
     function setLastUpdate(uint) external returns(bool);
 }
 
-/// @title - A messenger contract for transferring tokens and data across chains.
+/// @title - A messenger contract for transferring tokens and exchange rate data across chains.
 contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     using EnumerableMap for EnumerableMap.Bytes32ToUintMap;
 
@@ -36,7 +36,6 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     error SenderNotAllowed(address sender); // Used when the sender has not been allowlisted by the contract owner.
     error InvalidReceiverAddress(); // Used when the receiver address is 0.
     error OnlySelf(); // Used when a function is called outside of the contract itself.
-    error ErrorCase(); // Used when simulating a revert during message processing.
     error MessageNotFailed(bytes32 messageId);
 
     // Example error code, could have many different error codes.
