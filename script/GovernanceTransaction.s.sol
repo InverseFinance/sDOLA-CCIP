@@ -25,7 +25,7 @@ contract GovernanceTransaction is Script {
         payable(sender).transfer(0.1 ether);
         bytes memory callData = abi.encodeWithSelector(ExchangeRateProvider.setExchangeRate.selector, 2 ether);
         sender.allowlistGovernanceProxy(l2ChainSelector, l2GovProxy);
-        sender.sendMessagePayNative(l2ChainSelector, erp, callData);
+        sender.sendMessagePayNative(l2ChainSelector, erp, callData, 400_000);
 
     }
 }

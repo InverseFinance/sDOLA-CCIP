@@ -73,11 +73,13 @@ contract GovernanceSender is OwnerIsCreator {
     /// @param _destinationChainSelector The identifier (aka selector) for the destination blockchain.
     /// @param _calledContract The contract to be called
     /// @param _callData The call data to call the called contract with.
+    /// @param _additionalGasLimit Additional gas needed for paying for gas used for calls
     /// @return messageId The ID of the CCIP message that was sent.
     function sendMessagePayNative(
         uint64 _destinationChainSelector,
         address _calledContract,
-        bytes calldata _callData
+        bytes calldata _callData,
+        uint _additionalGasLimit
     )
         external
         onlyAllowListedCaller
@@ -90,7 +92,8 @@ contract GovernanceSender is OwnerIsCreator {
             governanceProxy,
             _calledContract,
             _callData,
-            address(0)
+            address(0),
+            _additionalGasLimit
         );
 
         // Get the fee required to send the CCIP message
@@ -123,12 +126,14 @@ contract GovernanceSender is OwnerIsCreator {
     /// @param _proxy The address of the receiver.
     /// @param _callData The string data to be sent.
     /// @param _feeTokenAddress The address of the token used for fees. Set address(0) for native gas.
+    /// @param _additionalGasLimit Additional gas needed for paying for gas used for calls
     /// @return Client.EVM2AnyMessage Returns an EVM2AnyMessage struct which contains information for sending a CCIP message.
     function _buildCCIPMessage(
         address _proxy,
         address _calledContract,
         bytes calldata _callData,
-        address _feeTokenAddress
+        address _feeTokenAddress,
+        uint _additionalGasLimit
     ) private pure returns (Client.EVM2AnyMessage memory) {
         // Create an EVM2AnyMessage struct in memory with necessary information for sending a cross-chain message
         return
@@ -138,7 +143,7 @@ contract GovernanceSender is OwnerIsCreator {
                 tokenAmounts: new Client.EVMTokenAmount[](0), // Empty array as no tokens are transferred
                 extraArgs: Client._argsToBytes(
                     // Additional arguments, setting gas limit
-                    Client.EVMExtraArgsV1({gasLimit: 400_000})
+                    Client.EVMExtraArgsV1({gasLimit: _additionalGasLimit})
                 ),
                 // Set the feeToken to a feeTokenAddress, indicating specific asset will be used for fees
                 feeToken: _feeTokenAddress
