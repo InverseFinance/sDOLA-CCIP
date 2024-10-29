@@ -52,6 +52,7 @@ contract GovernanceSender is OwnerIsCreator {
         _;
     }
 
+    /// @dev Updates the calle allow list status of an l1 address
     function allowlistCaller(
         address _caller,
         bool allowed
