@@ -8,25 +8,30 @@ import {ExchangeRateProvider} from "src/ExchangeRateProvider.sol";
 
 contract DeployL1 is Script {
     
-    address router = 0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59;
-    address link = 0x779877A7B0D9E8603169DdbD7836e478b4624789;
-    address token = 0x466D489b6d36E7E3b824ef491C225F5830E81cC1;
-    uint64 l2ChainSelector=3478487238524512106;
+    address router = 0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D;
+    address link = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
+    address sinv = 0x08d23468A467d2bb86FaE0e32F247A26C7E2e994;
+    address gov = 0x926dF14a23BE491164dCF93f4c468A50ef659D5B;
+    uint64 arbChainSelector=4949039107694359620;
+    uint64 baseChainSelector=15971525489660198786;
+    uint64 opChainSelector=3734403246176062136;
 
     function run() external {
-        require(token != address(0));
-        string memory mainnetL1RPC = vm.envString("RPC_MAINNET_SEPOLIA");
+        require(sinv != address(0));
+        string memory mainnetL1RPC = vm.envString("RPC_MAINNET");
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
       
         uint l1Fork = vm.createSelectFork(mainnetL1RPC);
         vm.startBroadcast(deployerPrivateKey);
-        ExchangeRateProvider erp = new ExchangeRateProvider(); 
-        erp.setUpdater(erp.owner(), true);
-        erp.setExchangeRate(1 ether);
-        erp.setLastUpdate(block.timestamp);
-        ProgrammableDataTokenTransfers bridge = new ProgrammableDataTokenTransfers(router, token, link, address(erp), true);
-        erp.setUpdater(address(bridge), true);
-        bridge.allowlistDestinationChain(l2ChainSelector, true);
-
+        ProgrammableDataTokenTransfers bridge = ProgrammableDataTokenTransfers(payable(0x041C3A97843B2B5ea59Fc02e4c20dd7bcd89f38A));//new ProgrammableDataTokenTransfers(router, sinv, link, sinv, true);
+        /*
+        bridge.allowlistDestinationChain(arbChainSelector, true);
+        bridge.allowlistDestinationChain(baseChainSelector, true);
+        bridge.allowlistDestinationChain(opChainSelector, true);
+        bridge.allowlistSourceChain(arbChainSelector, true);
+        bridge.allowlistSourceChain(baseChainSelector, true);
+        */
+        bridge.allowlistSourceChain(opChainSelector, true);
+        bridge.transferOwnership(gov);
     }
 }

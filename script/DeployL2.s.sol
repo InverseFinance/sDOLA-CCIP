@@ -30,6 +30,6 @@ contract DeployL2 is Script {
         erp.setUpdater(address(bridge), true);
         bridge.allowlistSourceChain(l1ChainSelector, true);
         bridge.allowlistDestinationChain(l1ChainSelector, true);
-        bridge.allowlistSender(l1Sender, true);
+        bridge.allowlistSender(l1Sender, l1ChainSelector, true);
     }
 }

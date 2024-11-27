@@ -14,7 +14,6 @@ contract ProgrammableDataTokenTransfersTest is Test {
     address link = 0xf97f4df75117a78c1A5a0DBb814Af92458539FB4;
     address router = 0x2a9C5afB0d0e4BAb2BCdaE109EC4b0c4Be15a165;
     address token = 0xA8C0c11bf64AF62CDCA6f93D3769B88BdD7cb93D;
-    //ERC20Mintable lockedToken = ERC20Mintable(0xCbB162B761B83578b2a0226cbAf4C1adE0d60B2e); //sDOLA
     ProgrammableDataTokenTransfers pdtt;
     ExchangeRateProvider erp;
     uint64 l1ChainSelector = 16015286601757825753;
@@ -31,7 +30,7 @@ contract ProgrammableDataTokenTransfersTest is Test {
         pdtt = new ProgrammableDataTokenTransfers(router, token, link, address(erp), false);
         pdtt.allowlistSourceChain(l1ChainSelector, true);
         pdtt.allowlistDestinationChain(l1ChainSelector, true);
-        pdtt.allowlistSender(sender, true);
+        pdtt.allowlistSender(sender, l1ChainSelector, true);
         erp.setUpdater(address(pdtt), true);
     }
 
@@ -68,7 +67,6 @@ contract ProgrammableDataTokenTransfersTest is Test {
         vm.selectFork(l2Fork);
         uint amount = 1 ether;
         uint lastUpdate = block.timestamp;
-        uint newExchangeRate = 2 ether;
         Client.Any2EVMMessage memory message = buildRouterMessage(user, token, amount, lastUpdate, 2 ether);
         IDrippable(token).drip(address(pdtt));
         vm.prank(router);
@@ -83,10 +81,9 @@ contract ProgrammableDataTokenTransfersTest is Test {
         vm.selectFork(l2Fork);
         uint amount = 1 ether;
         uint lastUpdate = block.timestamp;
-        uint newExchangeRate = 2 ether;
         pdtt = new ProgrammableDataTokenTransfers(router, token, link, address(erp), true);
         pdtt.allowlistSourceChain(l1ChainSelector, true);
-        pdtt.allowlistSender(sender, true);
+        pdtt.allowlistSender(sender, l1ChainSelector, true);
         erp.setUpdater(address(pdtt), true);
         Client.Any2EVMMessage memory message = buildRouterMessage(user, token, amount, lastUpdate, 2 ether);
         IDrippable(token).drip(address(pdtt));
@@ -106,7 +103,6 @@ contract ProgrammableDataTokenTransfersTest is Test {
         vm.selectFork(l2Fork);
         uint amount = 1 ether;
         uint lastUpdate = block.timestamp;
-        uint newExchangeRate = 2 ether;
         Client.Any2EVMMessage memory message = buildRouterMessage(user, token, amount, lastUpdate, 2 ether);
         IDrippable(token).drip(address(pdtt));
         vm.prank(router);
@@ -126,7 +122,6 @@ contract ProgrammableDataTokenTransfersTest is Test {
         vm.selectFork(l2Fork);
         uint amount = 1 ether;
         uint lastUpdate = block.timestamp;
-        uint newExchangeRate = 2 ether;
         Client.Any2EVMMessage memory message = buildRouterMessage(user, token, amount, lastUpdate, 2 ether);
         IDrippable(token).drip(address(pdtt));
         vm.prank(router);
@@ -146,7 +141,6 @@ contract ProgrammableDataTokenTransfersTest is Test {
         vm.selectFork(l2Fork);
         uint amount = 1 ether;
         uint lastUpdate = block.timestamp;
-        uint newExchangeRate = 2 ether;
         Client.Any2EVMMessage memory message = buildRouterMessage(user, token, amount, lastUpdate, 2 ether);
         message.sourceChainSelector = 0;
         IDrippable(token).drip(address(pdtt));
@@ -161,7 +155,6 @@ contract ProgrammableDataTokenTransfersTest is Test {
         vm.selectFork(l2Fork);
         uint amount = 1 ether;
         uint lastUpdate = block.timestamp;
-        uint newExchangeRate = 2 ether;
         Client.Any2EVMMessage memory message = buildRouterMessage(user, token, amount, lastUpdate, 2 ether);
         message.sender = abi.encode(address(0xdead));
         IDrippable(token).drip(address(pdtt));

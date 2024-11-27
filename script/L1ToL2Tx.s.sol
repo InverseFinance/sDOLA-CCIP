@@ -33,7 +33,7 @@ contract L1ToL2Tx is Script {
         token.approve(address(tokenBridge), 1 ether);
         erp.setExchangeRate(3 ether);
         tokenBridge.allowlistSourceChain(l2ChainSelector, true);
-        tokenBridge.allowlistSender(l2Bridge, true);
+        tokenBridge.allowlistSender(l2Bridge, l2ChainSelector, true);
         tokenBridge.sendMessagePayNative(l2ChainSelector, l2Bridge, owner, 0.09 ether);
 
     }

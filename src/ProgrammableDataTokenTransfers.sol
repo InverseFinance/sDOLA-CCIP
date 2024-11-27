@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Based on the Chainlink ProgrammableTokenTransfers contract
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
 import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/OwnerIsCreator.sol";
@@ -33,7 +33,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     error FailedToWithdrawEth(address owner, address target, uint256 value); // Used when the withdrawal of Ether fails.
     error DestinationChainNotAllowed(uint64 destinationChainSelector); // Used when the destination chain has not been allowlisted by the contract owner.
     error SourceChainNotAllowed(uint64 sourceChainSelector); // Used when the source chain has not been allowlisted by the contract owner.
-    error SenderNotAllowed(address sender); // Used when the sender has not been allowlisted by the contract owner.
+    error SenderNotAllowed(uint64 sourceChainSelector, address sender); // Used when the sender has not been allowlisted by the contract owner.
     error InvalidReceiverAddress(); // Used when the receiver address is 0.
     error OnlySelf(); // Used when a function is called outside of the contract itself.
     error MessageNotFailed(bytes32 messageId);
@@ -90,8 +90,8 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     // Mapping to keep track of allowlisted source chains.
     mapping(uint64 => bool) public allowlistedSourceChains;
 
-    // Mapping to keep track of allowlisted senders.
-    mapping(address => bool) public allowlistedSenders;
+    // Mapping to keep track of allowlisted senders for each network.
+    mapping(uint64 => mapping(address => bool)) public allowlistedSenders;
 
     // Mapping to keep track of when another network was last updated.
     mapping(uint64 => uint256) public lastUpdate;
@@ -132,7 +132,7 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     modifier onlyAllowlisted(uint64 _sourceChainSelector, address _sender) {
         if (!allowlistedSourceChains[_sourceChainSelector])
             revert SourceChainNotAllowed(_sourceChainSelector);
-        if (!allowlistedSenders[_sender]) revert SenderNotAllowed(_sender);
+        if (!allowlistedSenders[_sourceChainSelector][_sender]) revert SenderNotAllowed(_sourceChainSelector, _sender);
         _;
     }
 
@@ -175,9 +175,10 @@ contract ProgrammableDataTokenTransfers is CCIPReceiver, OwnerIsCreator {
     /// @dev Updates the allowlist status of a sender for transactions.
     /// @notice This function can only be called by the owner.
     /// @param _sender The address of the sender to be updated.
+    /// @param _sourceChainSelector The chainlink CCIP source chain selector to allow the sender to send messages from
     /// @param allowed The allowlist status to be set for the sender.
-    function allowlistSender(address _sender, bool allowed) external onlyOwner {
-        allowlistedSenders[_sender] = allowed;
+    function allowlistSender(address _sender, uint64 _sourceChainSelector, bool allowed) external onlyOwner {
+        allowlistedSenders[_sourceChainSelector][_sender] = allowed;
     }
 
     /// @notice Sends data and transfer tokens to receiver on the destination chain.
