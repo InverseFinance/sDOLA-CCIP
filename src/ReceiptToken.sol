@@ -53,7 +53,7 @@ contract ERC20Mintable is ExchangeRateProvider{
                                 ADMIN
     //////////////////////////////////////////////////////////////*/
     
-    mapping(address => bool) public minters;
+    address public minter;
 
     /*//////////////////////////////////////////////////////////////
                                CONSTRUCTOR
@@ -191,19 +191,19 @@ contract ERC20Mintable is ExchangeRateProvider{
                             ADMIN LOGIC
     //////////////////////////////////////////////////////////////*/
     
-    function mint(address to, uint256 amount) external {
-        require(minters[msg.sender], "msg.sender not minter");
+  function mint(address to, uint256 amount) external {
+        require(msg.sender == minter, "msg.sender not minter");
         _mint(to, amount);
     }
 
     function burn(uint256 amount) external {
-        require(minters[msg.sender], "msg.sender not minter");
         _burn(address(msg.sender), amount);
     }
 
-    function setMinter(address minter, bool isMinter) onlyOwner external {
-        minters[minter] = isMinter;
-        emit SetMinter(minter, isMinter);
+    //We only allow minter to be set once, which will be the burn and mint token pool
+    function setMinter(address _minter) onlyOwner external {
+        require(minter == address(0), "minter has been set");
+        minter = _minter;
     }
 
     /*//////////////////////////////////////////////////////////////

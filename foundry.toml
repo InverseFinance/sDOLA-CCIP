@@ -9,12 +9,26 @@ remappings = [
 solc = '0.8.21'
 
 [rpc_endpoints]
-ethereumSepolia = "${ETHEREUM_SEPOLIA_RPC_URL}"
+ethereumSepolia = "${RPC_MAINNET_SEPOLIA}"
+ethereumMainnet = "${RPC_MAINNET}"
 optimismGoerli = "${OPTIMISM_GOERLI_RPC_URL}"
 avalancheFuji = "${AVALANCHE_FUJI_RPC_URL}"
-arbitrumSepolia = "${ARBITRUM_SEPOLIA_RPC_URL}"
+arbitrumSepolia = "${RPC_ARBITRUM_SEPOLIA}"
 polygonMumbai = "${POLYGON_MUMBAI_RPC_URL}"
 bnbChainTestnet = "${BNB_CHAIN_TESTNET_RPC_URL}"
 baseGoerli = "${BASE_GOERLI_RPC_URL}"
+ethereum = "${RPC_MAINNET}"
+base = "${RPC_BASE}"
+optimism = "${RPC_OPTIMISM}"
+arbitrum = "${RPC_ARBITRUM}"
+
+[etherscan]
+ethereumSepolia = {key = "${ETHERSCAN_API_KEY}"}
+arbitrumSepolia = {key = "${ARBITRUM_API_KEY}"}
+ethereum = {key = "${ETHERSCAN_API_KEY}"}
+base = {key = "${BASESCAN_API_KEY}"}
+optimism = {key = "${OPTIMISM_API_KEY}"}
+arbitrum = {key = "${ARBITRUM_API_KEY}"}
+
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config
