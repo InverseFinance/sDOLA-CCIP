@@ -11,7 +11,7 @@ interface IFeed {
 }
 
 contract VaultExchangeRateProvider{
-    IERC4626 public vault;
+    IERC4626 public immutable vault;
 
     constructor(address _vault) {
         vault = IERC4626(_vault);
