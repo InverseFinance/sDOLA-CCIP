@@ -100,7 +100,7 @@ contract FullDeploy is Script, AddrConfig {
                 console.log("Token pool deployed to:", networkConfig.tokenPool);
                 IOwnable(networkConfig.tokenPool).acceptOwnership();
                 console.log("Ownership of token pool transferred to:", msg.sender);
-                ERC20Mintable(networkConfig.token).setMinter(networkConfig.tokenPool);
+                ERC20Mintable(networkConfig.token).setMinter(networkConfig.tokenPool, true);
                 console.log("Granted minting rights to tokenPool:", networkConfig.tokenPool);
 
                 //Set pool
