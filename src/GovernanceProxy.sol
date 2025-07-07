@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.19;
+pragma solidity ^0.8.21;
 
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
 import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/OwnerIsCreator.sol";
@@ -8,7 +8,7 @@ import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications
 
 
 /// @title - A simple receiver contract for receiving addresses and calldata, then calling them
-contract GovernanceProxy is CCIPReceiver, OwnerIsCreator {
+contract GovernanceProxy is CCIPReceiver {
 
     // Custom errors to provide more descriptive revert messages.
     error NotEnoughBalance(uint256 currentBalance, uint256 calculatedFees); // Used to make sure contract has enough balance.
@@ -27,10 +27,10 @@ contract GovernanceProxy is CCIPReceiver, OwnerIsCreator {
     );
 
     // Chainlink Chainselector of the allowed source chain
-    uint64 allowedSourceChain;
+    uint64 public immutable allowedSourceChain;
 
     // Address of governance messenger contract on source chain
-    address public allowedSender;
+    address public immutable allowedSender;
 
     /// @notice Constructor initializes the contract with the router address.
     /// @param _router The address of the router contract.
@@ -76,23 +76,5 @@ contract GovernanceProxy is CCIPReceiver, OwnerIsCreator {
     /// @dev This function has no function body, making it a default function for receiving Ether.
     /// It is automatically called when Ether is sent to the contract without any data.
     receive() external payable {}
-
-    /// @notice Allows the contract owner to withdraw the entire balance of Ether from the contract.
-    /// @dev This function reverts if there are no funds to withdraw or if the transfer fails.
-    /// It should only be callable by the owner of the contract.
-    /// @param _beneficiary The address to which the Ether should be sent.
-    function withdraw(address _beneficiary) public onlyOwner {
-        // Retrieve the balance of this contract
-        uint256 amount = address(this).balance;
-
-        // Revert if there is nothing to withdraw
-        if (amount == 0) revert NothingToWithdraw();
-
-        // Attempt to send the funds, capturing the success status and discarding any return data
-        (bool sent, ) = _beneficiary.call{value: amount}("");
-
-        // Revert if the send failed, with information about the attempted transfer
-        if (!sent) revert FailedToWithdrawEth(msg.sender, _beneficiary, amount);
-    }
 }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.19;
+pragma solidity ^0.8.21;
 
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
 import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/OwnerIsCreator.sol";
@@ -88,6 +88,7 @@ contract GovernanceSender is OwnerIsCreator {
         returns (bytes32 messageId)
     {
         address governanceProxy = governanceProxies[_destinationChainSelector];
+        require(governanceProxy != address(0), "Governance proxy has not been set");
         // Create an EVM2AnyMessage struct in memory with necessary information for sending a cross-chain message
         Client.EVM2AnyMessage memory evm2AnyMessage = _buildCCIPMessage(
             governanceProxy,
