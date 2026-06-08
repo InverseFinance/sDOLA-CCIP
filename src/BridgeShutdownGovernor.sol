@@ -44,11 +44,6 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
         uint256 gasLimit;
     }
 
-    struct ShutdownCall {
-        address target;
-        bytes callData;
-    }
-
     struct TokenPoolRemovals {
         uint64[] baseRemovals;
         uint64[] optimismRemovals;
@@ -65,18 +60,18 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
 
     event GovernanceSenderFunded(uint256 amount);
     event GovernanceSenderAllowlisted(address caller);
-    event GovernanceProxySet(uint64 indexed destinationChainSelector, address indexed governanceProxy);
     event ShutdownMessageSent(
         bytes32 indexed messageId, uint64 indexed destinationChainSelector, address indexed target, uint256 gasLimit
     );
     event GovernanceSenderOwnershipTransferRequested(address indexed newOwner);
     event EthWithdrawn(address indexed beneficiary, uint256 amount);
 
+    address public constant GOVERNANCE_SENDER_ADDRESS = 0x4e521Fe7A9084067096d45A312B8FEeE39D5F1f3;
+
     uint256 public constant TOKEN_POOL_GAS_LIMIT = 600_000;
     uint256 public constant SET_MINTER_GAS_LIMIT = 250_000;
     uint256 public constant LEGACY_BRIDGE_GAS_LIMIT = 250_000;
     uint256 public constant L2_SHUTDOWN_MESSAGE_COUNT = 38;
-    uint256 public constant MAINNET_LEGACY_BRIDGE_CALL_COUNT = 9;
     uint256 public constant MAINNET_SHUTDOWN_CALL_COUNT = 19;
 
     uint64 public constant MAINNET_CHAIN_SELECTOR = 5009297550715157269;
@@ -109,9 +104,8 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
 
     GovernanceSender private immutable GOVERNANCE_SENDER;
 
-    constructor(address owner_, address governanceSender_) ConfirmedOwner(owner_) {
-        if (governanceSender_ == address(0)) revert InvalidAddress();
-        GOVERNANCE_SENDER = GovernanceSender(payable(governanceSender_));
+    constructor(address owner_) ConfirmedOwner(owner_) {
+        GOVERNANCE_SENDER = GovernanceSender(payable(GOVERNANCE_SENDER_ADDRESS));
     }
 
     receive() external payable {}
@@ -127,67 +121,26 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
         emit GovernanceSenderAllowlisted(address(this));
     }
 
-    /// @notice Sets the known destination GovernanceProxy addresses used by the bridge shutdown.
-    function setShutdownGovernanceProxies() external onlyOwner {
-        _setGovernanceProxy(BASE_CHAIN_SELECTOR, BASE_GOVERNANCE_PROXY);
-        _setGovernanceProxy(OPTIMISM_CHAIN_SELECTOR, OPTIMISM_GOVERNANCE_PROXY);
-        _setGovernanceProxy(ARBITRUM_CHAIN_SELECTOR, ARBITRUM_GOVERNANCE_PROXY);
-        _setGovernanceProxy(BERACHAIN_CHAIN_SELECTOR, BERACHAIN_GOVERNANCE_PROXY);
-    }
-
-    /// @notice Builds the fixed L2 bridge shutdown message batch.
-    /// @dev Token pool removals are supplied by the caller because this L1 contract cannot read L2 pool state.
-    function buildL2ShutdownMessages(TokenPoolRemovals calldata tokenPoolRemovals)
-        external
-        pure
-        returns (ShutdownMessage[] memory messages)
-    {
-        return _buildL2ShutdownMessages(tokenPoolRemovals);
-    }
-
-    /// @notice Builds the fixed mainnet shutdown calls from the bridge shutdown script.
-    /// @dev These calls only succeed from the owner of the mainnet token pool and legacy bridge targets.
-    function buildMainnetShutdownCalls(uint64[] calldata mainnetTokenPoolRemovals)
-        external
-        pure
-        returns (ShutdownCall[] memory calls)
-    {
-        calls = new ShutdownCall[](MAINNET_SHUTDOWN_CALL_COUNT);
-        uint256 count;
-
-        calls[count++] =
-            ShutdownCall({target: MAINNET_TOKEN_POOL, callData: _tokenPoolShutdownCallData(mainnetTokenPoolRemovals)});
-        count = _appendMainnetLegacyBridgeShutdown(calls, count, OLD_MAINNET_PROGRAMMABLE_BRIDGE);
-        count = _appendMainnetLegacyBridgeShutdown(calls, count, NEW_MAINNET_PROGRAMMABLE_BRIDGE);
-
-        assert(count == MAINNET_SHUTDOWN_CALL_COUNT);
-    }
-
-    /// @notice Builds the mainnet legacy bridge shutdown calls for a specific bridge target.
-    function buildMainnetLegacyBridgeShutdownCalls(address bridge) external pure returns (ShutdownCall[] memory calls) {
-        if (bridge == address(0)) revert InvalidTarget();
-
-        calls = new ShutdownCall[](MAINNET_LEGACY_BRIDGE_CALL_COUNT);
-        uint256 count = _appendMainnetLegacyBridgeShutdown(calls, 0, bridge);
-        assert(count == MAINNET_LEGACY_BRIDGE_CALL_COUNT);
-    }
-
     /// @notice Sends the fixed L2 bridge shutdown message batch through GovernanceSender.
-    /// @dev Token pool removals are supplied by the caller because this L1 contract cannot read L2 pool state.
-    function executeL2Shutdown(TokenPoolRemovals calldata tokenPoolRemovals)
-        external
-        payable
-        onlyOwner
-        returns (bytes32[] memory messageIds)
-    {
-        _fundGovernanceSender(msg.value);
+    function executeL2Shutdown() external payable onlyOwner returns (bytes32[] memory messageIds) {
+        // Forward the caller's ETH to GovernanceSender so it can pay CCIP native fees.
+        if (msg.value > 0) {
+            (bool success,) = payable(address(GOVERNANCE_SENDER)).call{value: msg.value}("");
+            if (!success) revert EthTransferFailed(address(GOVERNANCE_SENDER), msg.value);
+            emit GovernanceSenderFunded(msg.value);
+        }
 
-        ShutdownMessage[] memory messages = _buildL2ShutdownMessages(tokenPoolRemovals);
+        ShutdownMessage[] memory messages = _buildL2ShutdownMessages(_hardcodedL2TokenPoolRemovals());
         uint256 length = messages.length;
         messageIds = new bytes32[](length);
         for (uint256 i; i < length; ++i) {
             ShutdownMessage memory shutdownMessage = messages[i];
-            bytes32 messageId = _sendShutdownMessage(
+
+            if (shutdownMessage.target == address(0)) revert InvalidTarget();
+            if (shutdownMessage.callData.length == 0) revert InvalidCallData();
+            if (shutdownMessage.gasLimit == 0) revert InvalidGasLimit();
+
+            bytes32 messageId = GOVERNANCE_SENDER.sendMessagePayNative(
                 shutdownMessage.destinationChainSelector,
                 shutdownMessage.target,
                 shutdownMessage.callData,
@@ -201,26 +154,6 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
         }
     }
 
-    function governanceProxyFor(uint64 chainSelector) external pure returns (address) {
-        return _governanceProxyFor(chainSelector);
-    }
-
-    function legacyBridgeFor(uint64 chainSelector) external pure returns (address) {
-        return _legacyBridgeFor(chainSelector);
-    }
-
-    function legacyRemoteSelectors(uint64 localSelector) external pure returns (uint64[3] memory) {
-        return _legacyRemoteSelectors(localSelector);
-    }
-
-    function legacySenderSelectors(uint64 localSelector) external pure returns (uint64[4] memory) {
-        return _legacySenderSelectors(localSelector);
-    }
-
-    function legacyRemoteSenders(uint64 localSelector) external pure returns (address[4] memory) {
-        return _legacyRemoteSenders(localSelector);
-    }
-
     /// @notice Withdraws ETH held by this contract and by GovernanceSender.
     function withdraw(address payable beneficiary) external onlyOwner {
         if (beneficiary == address(0)) revert InvalidAddress();
@@ -231,7 +164,8 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
 
         uint256 amount = address(this).balance;
         if (amount > 0) {
-            _sendEth(beneficiary, amount);
+            (bool success,) = beneficiary.call{value: amount}("");
+            if (!success) revert EthTransferFailed(beneficiary, amount);
             emit EthWithdrawn(beneficiary, amount);
         }
     }
@@ -244,7 +178,7 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
         emit GovernanceSenderOwnershipTransferRequested(newOwner);
     }
 
-    function _buildL2ShutdownMessages(TokenPoolRemovals calldata tokenPoolRemovals)
+    function _buildL2ShutdownMessages(TokenPoolRemovals memory tokenPoolRemovals)
         internal
         pure
         returns (ShutdownMessage[] memory messages)
@@ -252,23 +186,67 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
         messages = new ShutdownMessage[](L2_SHUTDOWN_MESSAGE_COUNT);
         uint256 count;
 
-        count = _appendTokenPoolShutdown(
-            messages, count, BASE_CHAIN_SELECTOR, BASE_TOKEN_POOL, tokenPoolRemovals.baseRemovals
-        );
-        count = _appendTokenPoolShutdown(
-            messages, count, OPTIMISM_CHAIN_SELECTOR, OPTIMISM_TOKEN_POOL, tokenPoolRemovals.optimismRemovals
-        );
-        count = _appendTokenPoolShutdown(
-            messages, count, ARBITRUM_CHAIN_SELECTOR, ARBITRUM_TOKEN_POOL, tokenPoolRemovals.arbitrumRemovals
-        );
-        count = _appendTokenPoolShutdown(
-            messages, count, BERACHAIN_CHAIN_SELECTOR, BERACHAIN_TOKEN_POOL, tokenPoolRemovals.berachainRemovals
-        );
+        BridgeShutdownChainUpdate[] memory noChainAdds = new BridgeShutdownChainUpdate[](0);
 
-        count = _appendSetMinter(messages, count, BASE_CHAIN_SELECTOR, BASE_TOKEN, BASE_TOKEN_POOL);
-        count = _appendSetMinter(messages, count, OPTIMISM_CHAIN_SELECTOR, OPTIMISM_TOKEN, OPTIMISM_TOKEN_POOL);
-        count = _appendSetMinter(messages, count, ARBITRUM_CHAIN_SELECTOR, ARBITRUM_TOKEN, ARBITRUM_TOKEN_POOL);
-        count = _appendSetMinter(messages, count, BERACHAIN_CHAIN_SELECTOR, BERACHAIN_TOKEN, BERACHAIN_TOKEN_POOL);
+        // Remove every known remote chain from each L2 token pool.
+        messages[count++] = ShutdownMessage({
+            destinationChainSelector: BASE_CHAIN_SELECTOR,
+            target: BASE_TOKEN_POOL,
+            callData: abi.encodeWithSelector(
+                IBridgeShutdownTokenPool.applyChainUpdates.selector, tokenPoolRemovals.baseRemovals, noChainAdds
+            ),
+            gasLimit: TOKEN_POOL_GAS_LIMIT
+        });
+        messages[count++] = ShutdownMessage({
+            destinationChainSelector: OPTIMISM_CHAIN_SELECTOR,
+            target: OPTIMISM_TOKEN_POOL,
+            callData: abi.encodeWithSelector(
+                IBridgeShutdownTokenPool.applyChainUpdates.selector, tokenPoolRemovals.optimismRemovals, noChainAdds
+            ),
+            gasLimit: TOKEN_POOL_GAS_LIMIT
+        });
+        messages[count++] = ShutdownMessage({
+            destinationChainSelector: ARBITRUM_CHAIN_SELECTOR,
+            target: ARBITRUM_TOKEN_POOL,
+            callData: abi.encodeWithSelector(
+                IBridgeShutdownTokenPool.applyChainUpdates.selector, tokenPoolRemovals.arbitrumRemovals, noChainAdds
+            ),
+            gasLimit: TOKEN_POOL_GAS_LIMIT
+        });
+        messages[count++] = ShutdownMessage({
+            destinationChainSelector: BERACHAIN_CHAIN_SELECTOR,
+            target: BERACHAIN_TOKEN_POOL,
+            callData: abi.encodeWithSelector(
+                IBridgeShutdownTokenPool.applyChainUpdates.selector, tokenPoolRemovals.berachainRemovals, noChainAdds
+            ),
+            gasLimit: TOKEN_POOL_GAS_LIMIT
+        });
+
+        // Revoke each L2 token pool's minting permission on its receipt token.
+        messages[count++] = ShutdownMessage({
+            destinationChainSelector: BASE_CHAIN_SELECTOR,
+            target: BASE_TOKEN,
+            callData: abi.encodeWithSelector(IBridgeShutdownMintable.setMinter.selector, BASE_TOKEN_POOL, false),
+            gasLimit: SET_MINTER_GAS_LIMIT
+        });
+        messages[count++] = ShutdownMessage({
+            destinationChainSelector: OPTIMISM_CHAIN_SELECTOR,
+            target: OPTIMISM_TOKEN,
+            callData: abi.encodeWithSelector(IBridgeShutdownMintable.setMinter.selector, OPTIMISM_TOKEN_POOL, false),
+            gasLimit: SET_MINTER_GAS_LIMIT
+        });
+        messages[count++] = ShutdownMessage({
+            destinationChainSelector: ARBITRUM_CHAIN_SELECTOR,
+            target: ARBITRUM_TOKEN,
+            callData: abi.encodeWithSelector(IBridgeShutdownMintable.setMinter.selector, ARBITRUM_TOKEN_POOL, false),
+            gasLimit: SET_MINTER_GAS_LIMIT
+        });
+        messages[count++] = ShutdownMessage({
+            destinationChainSelector: BERACHAIN_CHAIN_SELECTOR,
+            target: BERACHAIN_TOKEN,
+            callData: abi.encodeWithSelector(IBridgeShutdownMintable.setMinter.selector, BERACHAIN_TOKEN_POOL, false),
+            gasLimit: SET_MINTER_GAS_LIMIT
+        });
 
         count = _appendLegacyBridgeShutdown(messages, count, BASE_CHAIN_SELECTOR, BASE_PROGRAMMABLE_BRIDGE);
         count = _appendLegacyBridgeShutdown(messages, count, OPTIMISM_CHAIN_SELECTOR, OP_PROGRAMMABLE_BRIDGE);
@@ -277,221 +255,100 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
         assert(count == L2_SHUTDOWN_MESSAGE_COUNT);
     }
 
-    function _appendMainnetLegacyBridgeShutdown(ShutdownCall[] memory buffer, uint256 count, address bridge)
-        internal
-        pure
-        returns (uint256)
-    {
-        uint64[3] memory remoteSelectors = [BASE_CHAIN_SELECTOR, OPTIMISM_CHAIN_SELECTOR, ARBITRUM_CHAIN_SELECTOR];
-        for (uint256 i; i < remoteSelectors.length; ++i) {
-            uint64 remoteSelector = remoteSelectors[i];
-            buffer[count++] = ShutdownCall({
-                target: bridge,
-                callData: abi.encodeWithSelector(
-                    IBridgeShutdownProgrammableBridge.allowlistDestinationChain.selector, remoteSelector, false
-                )
-            });
-            buffer[count++] = ShutdownCall({
-                target: bridge,
-                callData: abi.encodeWithSelector(
-                    IBridgeShutdownProgrammableBridge.allowlistSourceChain.selector, remoteSelector, false
-                )
-            });
-        }
-
-        buffer[count++] = ShutdownCall({
-            target: bridge,
-            callData: abi.encodeWithSelector(
-                IBridgeShutdownProgrammableBridge.allowlistSender.selector,
-                BASE_PROGRAMMABLE_BRIDGE,
-                BASE_CHAIN_SELECTOR,
-                false
-            )
-        });
-        buffer[count++] = ShutdownCall({
-            target: bridge,
-            callData: abi.encodeWithSelector(
-                IBridgeShutdownProgrammableBridge.allowlistSender.selector,
-                OP_PROGRAMMABLE_BRIDGE,
-                OPTIMISM_CHAIN_SELECTOR,
-                false
-            )
-        });
-        buffer[count++] = ShutdownCall({
-            target: bridge,
-            callData: abi.encodeWithSelector(
-                IBridgeShutdownProgrammableBridge.allowlistSender.selector,
-                ARB_PROGRAMMABLE_BRIDGE,
-                ARBITRUM_CHAIN_SELECTOR,
-                false
-            )
-        });
-
-        return count;
-    }
-
-    function _appendTokenPoolShutdown(
-        ShutdownMessage[] memory buffer,
-        uint256 count,
-        uint64 destinationChainSelector,
-        address tokenPool,
-        uint64[] calldata removals
-    ) internal pure returns (uint256) {
-        buffer[count++] = ShutdownMessage({
-            destinationChainSelector: destinationChainSelector,
-            target: tokenPool,
-            callData: _tokenPoolShutdownCallData(removals),
-            gasLimit: TOKEN_POOL_GAS_LIMIT
-        });
-
-        return count;
-    }
-
-    function _appendSetMinter(
-        ShutdownMessage[] memory buffer,
-        uint256 count,
-        uint64 destinationChainSelector,
-        address token,
-        address tokenPool
-    ) internal pure returns (uint256) {
-        buffer[count++] = ShutdownMessage({
-            destinationChainSelector: destinationChainSelector,
-            target: token,
-            callData: abi.encodeWithSelector(IBridgeShutdownMintable.setMinter.selector, tokenPool, false),
-            gasLimit: SET_MINTER_GAS_LIMIT
-        });
-
-        return count;
-    }
-
     function _appendLegacyBridgeShutdown(
         ShutdownMessage[] memory buffer,
         uint256 count,
         uint64 destinationChainSelector,
         address bridge
     ) internal pure returns (uint256) {
-        uint64[3] memory remoteSelectors = _legacyRemoteSelectors(destinationChainSelector);
-        for (uint256 i; i < remoteSelectors.length; ++i) {
-            uint64 remoteSelector = remoteSelectors[i];
-            buffer[count++] = _message(
-                destinationChainSelector,
-                bridge,
-                abi.encodeWithSelector(
-                    IBridgeShutdownProgrammableBridge.allowlistDestinationChain.selector, remoteSelector, false
-                ),
-                LEGACY_BRIDGE_GAS_LIMIT
-            );
-            buffer[count++] = _message(
-                destinationChainSelector,
-                bridge,
-                abi.encodeWithSelector(
-                    IBridgeShutdownProgrammableBridge.allowlistSourceChain.selector, remoteSelector, false
-                ),
-                LEGACY_BRIDGE_GAS_LIMIT
-            );
+        uint64[3] memory remoteSelectors;
+        address[4] memory senders;
+        uint64[4] memory senderSelectors;
+
+        senders[0] = OLD_MAINNET_PROGRAMMABLE_BRIDGE;
+        senderSelectors[0] = MAINNET_CHAIN_SELECTOR;
+        senders[1] = NEW_MAINNET_PROGRAMMABLE_BRIDGE;
+        senderSelectors[1] = MAINNET_CHAIN_SELECTOR;
+
+        if (destinationChainSelector == BASE_CHAIN_SELECTOR) {
+            remoteSelectors = [ARBITRUM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, OPTIMISM_CHAIN_SELECTOR];
+            senders[2] = ARB_PROGRAMMABLE_BRIDGE;
+            senderSelectors[2] = ARBITRUM_CHAIN_SELECTOR;
+            senders[3] = OP_PROGRAMMABLE_BRIDGE;
+            senderSelectors[3] = OPTIMISM_CHAIN_SELECTOR;
+        } else if (destinationChainSelector == OPTIMISM_CHAIN_SELECTOR) {
+            remoteSelectors = [ARBITRUM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, BASE_CHAIN_SELECTOR];
+            senders[2] = ARB_PROGRAMMABLE_BRIDGE;
+            senderSelectors[2] = ARBITRUM_CHAIN_SELECTOR;
+            senders[3] = BASE_PROGRAMMABLE_BRIDGE;
+            senderSelectors[3] = BASE_CHAIN_SELECTOR;
+        } else if (destinationChainSelector == ARBITRUM_CHAIN_SELECTOR) {
+            remoteSelectors = [OPTIMISM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, BASE_CHAIN_SELECTOR];
+            senders[2] = OP_PROGRAMMABLE_BRIDGE;
+            senderSelectors[2] = OPTIMISM_CHAIN_SELECTOR;
+            senders[3] = BASE_PROGRAMMABLE_BRIDGE;
+            senderSelectors[3] = BASE_CHAIN_SELECTOR;
+        } else {
+            revert UnknownChainSelector(destinationChainSelector);
         }
 
-        address[4] memory senders = _legacyRemoteSenders(destinationChainSelector);
-        uint64[4] memory senderSelectors = _legacySenderSelectors(destinationChainSelector);
+        // Stop the legacy bridge from sending to or receiving from every remote chain.
+        for (uint256 i; i < remoteSelectors.length; ++i) {
+            uint64 remoteSelector = remoteSelectors[i];
+            buffer[count++] = ShutdownMessage({
+                destinationChainSelector: destinationChainSelector,
+                target: bridge,
+                callData: abi.encodeWithSelector(
+                    IBridgeShutdownProgrammableBridge.allowlistDestinationChain.selector, remoteSelector, false
+                ),
+                gasLimit: LEGACY_BRIDGE_GAS_LIMIT
+            });
+            buffer[count++] = ShutdownMessage({
+                destinationChainSelector: destinationChainSelector,
+                target: bridge,
+                callData: abi.encodeWithSelector(
+                    IBridgeShutdownProgrammableBridge.allowlistSourceChain.selector, remoteSelector, false
+                ),
+                gasLimit: LEGACY_BRIDGE_GAS_LIMIT
+            });
+        }
+
+        // Stop every known remote legacy bridge from being accepted as a sender.
         for (uint256 i; i < senders.length; ++i) {
-            buffer[count++] = _message(
-                destinationChainSelector,
-                bridge,
-                abi.encodeWithSelector(
+            buffer[count++] = ShutdownMessage({
+                destinationChainSelector: destinationChainSelector,
+                target: bridge,
+                callData: abi.encodeWithSelector(
                     IBridgeShutdownProgrammableBridge.allowlistSender.selector, senders[i], senderSelectors[i], false
                 ),
-                LEGACY_BRIDGE_GAS_LIMIT
-            );
+                gasLimit: LEGACY_BRIDGE_GAS_LIMIT
+            });
         }
 
         return count;
     }
 
-    function _message(uint64 destinationChainSelector, address target, bytes memory callData, uint256 gasLimit)
-        internal
-        pure
-        returns (ShutdownMessage memory)
-    {
-        return ShutdownMessage({
-            destinationChainSelector: destinationChainSelector, target: target, callData: callData, gasLimit: gasLimit
-        });
-    }
+    function _hardcodedL2TokenPoolRemovals() internal pure returns (TokenPoolRemovals memory removals) {
+        removals.baseRemovals = new uint64[](4);
+        removals.baseRemovals[0] = ARBITRUM_CHAIN_SELECTOR;
+        removals.baseRemovals[1] = OPTIMISM_CHAIN_SELECTOR;
+        removals.baseRemovals[2] = MAINNET_CHAIN_SELECTOR;
+        removals.baseRemovals[3] = BERACHAIN_CHAIN_SELECTOR;
 
-    function _governanceProxyFor(uint64 chainSelector) internal pure returns (address) {
-        if (chainSelector == BASE_CHAIN_SELECTOR) return BASE_GOVERNANCE_PROXY;
-        if (chainSelector == OPTIMISM_CHAIN_SELECTOR) return OPTIMISM_GOVERNANCE_PROXY;
-        if (chainSelector == ARBITRUM_CHAIN_SELECTOR) return ARBITRUM_GOVERNANCE_PROXY;
-        if (chainSelector == BERACHAIN_CHAIN_SELECTOR) return BERACHAIN_GOVERNANCE_PROXY;
-        revert UnknownChainSelector(chainSelector);
-    }
+        removals.optimismRemovals = new uint64[](3);
+        removals.optimismRemovals[0] = ARBITRUM_CHAIN_SELECTOR;
+        removals.optimismRemovals[1] = BASE_CHAIN_SELECTOR;
+        removals.optimismRemovals[2] = MAINNET_CHAIN_SELECTOR;
 
-    function _legacyRemoteSelectors(uint64 localSelector) internal pure returns (uint64[3] memory) {
-        if (localSelector == BASE_CHAIN_SELECTOR) {
-            return [ARBITRUM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, OPTIMISM_CHAIN_SELECTOR];
-        }
-        if (localSelector == OPTIMISM_CHAIN_SELECTOR) {
-            return [ARBITRUM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, BASE_CHAIN_SELECTOR];
-        }
-        if (localSelector == ARBITRUM_CHAIN_SELECTOR) {
-            return [OPTIMISM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, BASE_CHAIN_SELECTOR];
-        }
-        revert UnknownChainSelector(localSelector);
-    }
+        removals.arbitrumRemovals = new uint64[](4);
+        removals.arbitrumRemovals[0] = BASE_CHAIN_SELECTOR;
+        removals.arbitrumRemovals[1] = OPTIMISM_CHAIN_SELECTOR;
+        removals.arbitrumRemovals[2] = MAINNET_CHAIN_SELECTOR;
+        removals.arbitrumRemovals[3] = BERACHAIN_CHAIN_SELECTOR;
 
-    function _legacySenderSelectors(uint64 localSelector) internal pure returns (uint64[4] memory) {
-        uint64[3] memory remoteSelectors = _legacyRemoteSelectors(localSelector);
-        return [MAINNET_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, remoteSelectors[0], remoteSelectors[2]];
-    }
-
-    function _legacyRemoteSenders(uint64 localSelector) internal pure returns (address[4] memory) {
-        uint64[3] memory remoteSelectors = _legacyRemoteSelectors(localSelector);
-        return [
-            OLD_MAINNET_PROGRAMMABLE_BRIDGE,
-            NEW_MAINNET_PROGRAMMABLE_BRIDGE,
-            _legacyBridgeFor(remoteSelectors[0]),
-            _legacyBridgeFor(remoteSelectors[2])
-        ];
-    }
-
-    function _legacyBridgeFor(uint64 chainSelector) internal pure returns (address) {
-        if (chainSelector == BASE_CHAIN_SELECTOR) return BASE_PROGRAMMABLE_BRIDGE;
-        if (chainSelector == OPTIMISM_CHAIN_SELECTOR) return OP_PROGRAMMABLE_BRIDGE;
-        if (chainSelector == ARBITRUM_CHAIN_SELECTOR) return ARB_PROGRAMMABLE_BRIDGE;
-        revert UnknownChainSelector(chainSelector);
-    }
-
-    function _tokenPoolShutdownCallData(uint64[] calldata removals) internal pure returns (bytes memory) {
-        BridgeShutdownChainUpdate[] memory noChainAdds = new BridgeShutdownChainUpdate[](0);
-        return abi.encodeWithSelector(IBridgeShutdownTokenPool.applyChainUpdates.selector, removals, noChainAdds);
-    }
-
-    function _setGovernanceProxy(uint64 destinationChainSelector, address governanceProxy) internal {
-        GOVERNANCE_SENDER.allowlistGovernanceProxy(destinationChainSelector, governanceProxy);
-        emit GovernanceProxySet(destinationChainSelector, governanceProxy);
-    }
-
-    function _fundGovernanceSender(uint256 amount) internal {
-        if (amount > 0) {
-            _sendEth(payable(address(GOVERNANCE_SENDER)), amount);
-            emit GovernanceSenderFunded(amount);
-        }
-    }
-
-    function _sendShutdownMessage(
-        uint64 destinationChainSelector,
-        address target,
-        bytes memory callData,
-        uint256 gasLimit
-    ) internal returns (bytes32 messageId) {
-        if (target == address(0)) revert InvalidTarget();
-        if (callData.length == 0) revert InvalidCallData();
-        if (gasLimit == 0) revert InvalidGasLimit();
-
-        messageId = GOVERNANCE_SENDER.sendMessagePayNative(destinationChainSelector, target, callData, gasLimit);
-    }
-
-    function _sendEth(address payable target, uint256 amount) internal {
-        (bool success,) = target.call{value: amount}("");
-        if (!success) revert EthTransferFailed(target, amount);
+        removals.berachainRemovals = new uint64[](3);
+        removals.berachainRemovals[0] = ARBITRUM_CHAIN_SELECTOR;
+        removals.berachainRemovals[1] = BASE_CHAIN_SELECTOR;
+        removals.berachainRemovals[2] = MAINNET_CHAIN_SELECTOR;
     }
 }
