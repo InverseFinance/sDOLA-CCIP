@@ -7,7 +7,6 @@ import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/
 import {
     BridgeShutdownChainUpdate,
     BridgeShutdownGovernor,
-    IBridgeShutdownProgrammableBridge,
     IBridgeShutdownTokenPool
 } from "src/BridgeShutdownGovernor.sol";
 import {GovernanceSender} from "src/GovernanceSender.sol";
@@ -34,14 +33,6 @@ interface IShutdownReceiptToken {
     function owner() external view returns (address);
     function mint(address to, uint256 amount) external;
     function setPendingOwner(address newPendingOwner) external;
-}
-
-interface IShutdownLegacyBridge {
-    function owner() external view returns (address);
-    function transferOwnership(address to) external;
-    function allowlistedDestinationChains(uint64 destinationChainSelector) external view returns (bool);
-    function allowlistedSourceChains(uint64 sourceChainSelector) external view returns (bool);
-    function allowlistedSenders(uint64 sourceChainSelector, address sender) external view returns (bool);
 }
 
 contract RecordingRouter is IRouterClient {
@@ -132,12 +123,6 @@ contract BridgeShutdownScriptHarness is BridgeShutdownScript {
                 IBridgeShutdownTokenPool.applyChainUpdates.selector, mainnetRemovals, noChainAdds
             )
         });
-        count = _appendMainnetLegacyBridgeShutdown(
-            shutdownPlan, calls, count, shutdownPlan.OLD_MAINNET_PROGRAMMABLE_BRIDGE()
-        );
-        count = _appendMainnetLegacyBridgeShutdown(
-            shutdownPlan, calls, count, shutdownPlan.NEW_MAINNET_PROGRAMMABLE_BRIDGE()
-        );
 
         assert(count == calls.length);
     }
@@ -191,14 +176,8 @@ contract BridgeShutdownGovernorForkTest is Test {
     address internal constant ARBITRUM_TOKEN = 0x7a1e123e41458aabaB8068BFed6010D8f9480898;
     address internal constant BERACHAIN_TOKEN = 0x02eaa69646183c069FC2B64F15923F27B9CF3b03;
 
-    address internal constant OLD_MAINNET_PROGRAMMABLE_BRIDGE = 0x7A43C13f7Fb3A0bF19cEB3fBC583A0CAda6D29a2;
-    address internal constant NEW_MAINNET_PROGRAMMABLE_BRIDGE = 0x70F3795c1EF726c58FfeA2e1A51526ac5707C066;
-    address internal constant BASE_PROGRAMMABLE_BRIDGE = 0x0173804066F7403E0815680F3DDa125a6cd10F7c;
-    address internal constant OP_PROGRAMMABLE_BRIDGE = 0xb5A998E90AdeD2C97f7ceDbb7c45Bbc27E82dfdD;
-    address internal constant ARB_PROGRAMMABLE_BRIDGE = 0x0173804066F7403E0815680F3DDa125a6cd10F7c;
-
-    uint256 internal constant L2_SHUTDOWN_MESSAGE_COUNT = 38;
-    uint256 internal constant MAINNET_SHUTDOWN_CALL_COUNT = 19;
+    uint256 internal constant L2_SHUTDOWN_MESSAGE_COUNT = 8;
+    uint256 internal constant MAINNET_SHUTDOWN_CALL_COUNT = 1;
     uint256 internal constant RECORDING_ROUTER_FIXED_FEE = 0.001 ether;
 
     bytes32 internal constant CCIP_SEND_RECORDED_TOPIC =
@@ -286,9 +265,6 @@ contract BridgeShutdownGovernorForkTest is Test {
             MAINNET_TOKEN_POOL,
             _array4(BASE_CHAIN_SELECTOR, OPTIMISM_CHAIN_SELECTOR, ARBITRUM_CHAIN_SELECTOR, BERACHAIN_CHAIN_SELECTOR)
         );
-        _assertLegacyBridgeHasOwnerIfDeployed(OLD_MAINNET_PROGRAMMABLE_BRIDGE);
-        _assertLegacyBridgeHasOwnerIfDeployed(NEW_MAINNET_PROGRAMMABLE_BRIDGE);
-
         _assertL2PreShutdownState(
             baseFork,
             BASE_GOVERNANCE_PROXY,
@@ -345,32 +321,15 @@ contract BridgeShutdownGovernorForkTest is Test {
     }
 
     function _prepareL2OwnershipForShutdown() internal {
+        _prepareL2OwnershipForShutdown(baseFork, BASE_GOVERNANCE_PROXY, BASE_ROUTER, BASE_TOKEN, BASE_TOKEN_POOL);
         _prepareL2OwnershipForShutdown(
-            baseFork, BASE_GOVERNANCE_PROXY, BASE_ROUTER, BASE_TOKEN, BASE_TOKEN_POOL, BASE_PROGRAMMABLE_BRIDGE
+            optimismFork, OPTIMISM_GOVERNANCE_PROXY, OPTIMISM_ROUTER, OPTIMISM_TOKEN, OPTIMISM_TOKEN_POOL
         );
         _prepareL2OwnershipForShutdown(
-            optimismFork,
-            OPTIMISM_GOVERNANCE_PROXY,
-            OPTIMISM_ROUTER,
-            OPTIMISM_TOKEN,
-            OPTIMISM_TOKEN_POOL,
-            OP_PROGRAMMABLE_BRIDGE
+            arbitrumFork, ARBITRUM_GOVERNANCE_PROXY, ARBITRUM_ROUTER, ARBITRUM_TOKEN, ARBITRUM_TOKEN_POOL
         );
         _prepareL2OwnershipForShutdown(
-            arbitrumFork,
-            ARBITRUM_GOVERNANCE_PROXY,
-            ARBITRUM_ROUTER,
-            ARBITRUM_TOKEN,
-            ARBITRUM_TOKEN_POOL,
-            ARB_PROGRAMMABLE_BRIDGE
-        );
-        _prepareL2OwnershipForShutdown(
-            berachainFork,
-            BERACHAIN_GOVERNANCE_PROXY,
-            BERACHAIN_ROUTER,
-            BERACHAIN_TOKEN,
-            BERACHAIN_TOKEN_POOL,
-            address(0)
+            berachainFork, BERACHAIN_GOVERNANCE_PROXY, BERACHAIN_ROUTER, BERACHAIN_TOKEN, BERACHAIN_TOKEN_POOL
         );
     }
 
@@ -379,8 +338,7 @@ contract BridgeShutdownGovernorForkTest is Test {
         address governanceProxy,
         address router,
         address token,
-        address tokenPool,
-        address legacyBridge
+        address tokenPool
     ) internal {
         vm.selectFork(forkId);
 
@@ -407,48 +365,21 @@ contract BridgeShutdownGovernorForkTest is Test {
                 keccak256(abi.encode("accept-token-pool-owner", tokenPool))
             );
         }
-
-        if (legacyBridge != address(0) && legacyBridge.code.length != 0) {
-            if (IShutdownLegacyBridge(legacyBridge).owner() != governanceProxy) {
-                vm.prank(IShutdownLegacyBridge(legacyBridge).owner());
-                IShutdownLegacyBridge(legacyBridge).transferOwnership(governanceProxy);
-                _deliverGovernanceCall(
-                    governanceProxy,
-                    router,
-                    legacyBridge,
-                    abi.encodeWithSignature("acceptOwnership()"),
-                    keccak256(abi.encode("accept-legacy-bridge-owner", legacyBridge))
-                );
-            }
-        }
     }
 
     function _assertL2ReadyForShutdownState() internal {
-        _assertL2ReadyForShutdownState(
-            baseFork, BASE_GOVERNANCE_PROXY, BASE_TOKEN_POOL, BASE_TOKEN, BASE_PROGRAMMABLE_BRIDGE
-        );
-        _assertL2ReadyForShutdownState(
-            optimismFork, OPTIMISM_GOVERNANCE_PROXY, OPTIMISM_TOKEN_POOL, OPTIMISM_TOKEN, OP_PROGRAMMABLE_BRIDGE
-        );
-        _assertL2ReadyForShutdownState(
-            arbitrumFork, ARBITRUM_GOVERNANCE_PROXY, ARBITRUM_TOKEN_POOL, ARBITRUM_TOKEN, ARB_PROGRAMMABLE_BRIDGE
-        );
-        _assertL2ReadyForShutdownState(
-            berachainFork, BERACHAIN_GOVERNANCE_PROXY, BERACHAIN_TOKEN_POOL, BERACHAIN_TOKEN, address(0)
-        );
+        _assertL2ReadyForShutdownState(baseFork, BASE_GOVERNANCE_PROXY, BASE_TOKEN_POOL, BASE_TOKEN);
+        _assertL2ReadyForShutdownState(optimismFork, OPTIMISM_GOVERNANCE_PROXY, OPTIMISM_TOKEN_POOL, OPTIMISM_TOKEN);
+        _assertL2ReadyForShutdownState(arbitrumFork, ARBITRUM_GOVERNANCE_PROXY, ARBITRUM_TOKEN_POOL, ARBITRUM_TOKEN);
+        _assertL2ReadyForShutdownState(berachainFork, BERACHAIN_GOVERNANCE_PROXY, BERACHAIN_TOKEN_POOL, BERACHAIN_TOKEN);
     }
 
-    function _assertL2ReadyForShutdownState(
-        uint256 forkId,
-        address governanceProxy,
-        address tokenPool,
-        address token,
-        address legacyBridge
-    ) internal {
+    function _assertL2ReadyForShutdownState(uint256 forkId, address governanceProxy, address tokenPool, address token)
+        internal
+    {
         vm.selectFork(forkId);
         assertEq(IShutdownTokenPool(tokenPool).owner(), governanceProxy);
         assertEq(IShutdownReceiptToken(token).owner(), governanceProxy);
-        _assertLegacyBridgeOwnerIfDeployed(legacyBridge, governanceProxy);
     }
 
     function _installRecordingRouter() internal {
@@ -574,90 +505,24 @@ contract BridgeShutdownGovernorForkTest is Test {
 
     function _assertMainnetShutdownState() internal {
         _assertNoSupportedChains(MAINNET_TOKEN_POOL);
-        _assertMainnetLegacyBridgeShutdown(OLD_MAINNET_PROGRAMMABLE_BRIDGE);
-        _assertMainnetLegacyBridgeShutdown(NEW_MAINNET_PROGRAMMABLE_BRIDGE);
     }
 
     function _assertL2ShutdownState() internal {
         vm.selectFork(baseFork);
         _assertNoSupportedChains(BASE_TOKEN_POOL);
         _assertNotMinter(BASE_TOKEN, BASE_TOKEN_POOL);
-        _assertBaseLegacyBridgeShutdown();
 
         vm.selectFork(optimismFork);
         _assertNoSupportedChains(OPTIMISM_TOKEN_POOL);
         _assertNotMinter(OPTIMISM_TOKEN, OPTIMISM_TOKEN_POOL);
-        _assertOptimismLegacyBridgeShutdown();
 
         vm.selectFork(arbitrumFork);
         _assertNoSupportedChains(ARBITRUM_TOKEN_POOL);
         _assertNotMinter(ARBITRUM_TOKEN, ARBITRUM_TOKEN_POOL);
-        _assertArbitrumLegacyBridgeShutdown();
 
         vm.selectFork(berachainFork);
         _assertNoSupportedChains(BERACHAIN_TOKEN_POOL);
         _assertNotMinter(BERACHAIN_TOKEN, BERACHAIN_TOKEN_POOL);
-    }
-
-    function _assertMainnetLegacyBridgeShutdown(address bridge) internal {
-        if (bridge.code.length == 0) return;
-
-        _assertLegacyRoutesDisabled(
-            bridge, _array3(BASE_CHAIN_SELECTOR, OPTIMISM_CHAIN_SELECTOR, ARBITRUM_CHAIN_SELECTOR)
-        );
-        _assertLegacySenderDisabled(bridge, BASE_PROGRAMMABLE_BRIDGE, BASE_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, OP_PROGRAMMABLE_BRIDGE, OPTIMISM_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, ARB_PROGRAMMABLE_BRIDGE, ARBITRUM_CHAIN_SELECTOR);
-    }
-
-    function _assertBaseLegacyBridgeShutdown() internal {
-        address bridge = BASE_PROGRAMMABLE_BRIDGE;
-        if (bridge.code.length == 0) return;
-
-        _assertLegacyRoutesDisabled(
-            bridge, _array3(ARBITRUM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, OPTIMISM_CHAIN_SELECTOR)
-        );
-        _assertLegacySenderDisabled(bridge, OLD_MAINNET_PROGRAMMABLE_BRIDGE, MAINNET_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, NEW_MAINNET_PROGRAMMABLE_BRIDGE, MAINNET_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, ARB_PROGRAMMABLE_BRIDGE, ARBITRUM_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, OP_PROGRAMMABLE_BRIDGE, OPTIMISM_CHAIN_SELECTOR);
-    }
-
-    function _assertOptimismLegacyBridgeShutdown() internal {
-        address bridge = OP_PROGRAMMABLE_BRIDGE;
-        if (bridge.code.length == 0) return;
-
-        _assertLegacyRoutesDisabled(
-            bridge, _array3(ARBITRUM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, BASE_CHAIN_SELECTOR)
-        );
-        _assertLegacySenderDisabled(bridge, OLD_MAINNET_PROGRAMMABLE_BRIDGE, MAINNET_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, NEW_MAINNET_PROGRAMMABLE_BRIDGE, MAINNET_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, ARB_PROGRAMMABLE_BRIDGE, ARBITRUM_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, BASE_PROGRAMMABLE_BRIDGE, BASE_CHAIN_SELECTOR);
-    }
-
-    function _assertArbitrumLegacyBridgeShutdown() internal {
-        address bridge = ARB_PROGRAMMABLE_BRIDGE;
-        if (bridge.code.length == 0) return;
-
-        _assertLegacyRoutesDisabled(
-            bridge, _array3(OPTIMISM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, BASE_CHAIN_SELECTOR)
-        );
-        _assertLegacySenderDisabled(bridge, OLD_MAINNET_PROGRAMMABLE_BRIDGE, MAINNET_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, NEW_MAINNET_PROGRAMMABLE_BRIDGE, MAINNET_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, OP_PROGRAMMABLE_BRIDGE, OPTIMISM_CHAIN_SELECTOR);
-        _assertLegacySenderDisabled(bridge, BASE_PROGRAMMABLE_BRIDGE, BASE_CHAIN_SELECTOR);
-    }
-
-    function _assertLegacyRoutesDisabled(address bridge, uint64[] memory remoteSelectors) internal {
-        for (uint256 i; i < remoteSelectors.length; ++i) {
-            assertFalse(IShutdownLegacyBridge(bridge).allowlistedDestinationChains(remoteSelectors[i]));
-            assertFalse(IShutdownLegacyBridge(bridge).allowlistedSourceChains(remoteSelectors[i]));
-        }
-    }
-
-    function _assertLegacySenderDisabled(address bridge, address sender, uint64 sourceChainSelector) internal {
-        assertFalse(IShutdownLegacyBridge(bridge).allowlistedSenders(sourceChainSelector, sender));
     }
 
     function _assertSupportedChainSet(address tokenPool, uint64[] memory expected) internal {
@@ -682,16 +547,6 @@ contract BridgeShutdownGovernorForkTest is Test {
         vm.prank(minter);
         vm.expectRevert(bytes("msg.sender not minter"));
         IShutdownReceiptToken(token).mint(address(0xBEEF), 0);
-    }
-
-    function _assertLegacyBridgeOwnerIfDeployed(address bridge, address expectedOwner) internal {
-        if (bridge == address(0) || bridge.code.length == 0) return;
-        assertEq(IShutdownLegacyBridge(bridge).owner(), expectedOwner);
-    }
-
-    function _assertLegacyBridgeHasOwnerIfDeployed(address bridge) internal {
-        if (bridge == address(0) || bridge.code.length == 0) return;
-        assertTrue(IShutdownLegacyBridge(bridge).owner() != address(0));
     }
 
     function _assertHasCode(address target, string memory errorMessage) internal {

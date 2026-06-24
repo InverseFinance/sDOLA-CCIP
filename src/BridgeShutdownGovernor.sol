@@ -35,12 +35,6 @@ interface IBridgeShutdownMintable {
     function setMinter(address minter, bool isMinter) external;
 }
 
-interface IBridgeShutdownProgrammableBridge {
-    function allowlistDestinationChain(uint64 destinationChainSelector, bool allowed) external;
-    function allowlistSourceChain(uint64 sourceChainSelector, bool allowed) external;
-    function allowlistSender(address sender, uint64 sourceChainSelector, bool allowed) external;
-}
-
 /// @notice Temporary L1 owner of GovernanceSender used to send the fixed bridge wind-down messages.
 /// @dev This contract is intentionally a hardcoded shutdown plan:
 ///      - it cannot choose arbitrary destination chains;
@@ -92,13 +86,12 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
     // shutdown plan and cannot be changed by the caller.
     uint256 public constant TOKEN_POOL_GAS_LIMIT = 600_000;
     uint256 public constant SET_MINTER_GAS_LIMIT = 250_000;
-    uint256 public constant LEGACY_BRIDGE_GAS_LIMIT = 250_000;
 
     // Message/call counts document the expected size of the shutdown plan:
-    // L2: 4 token-pool removals + 4 minter revocations + 30 legacy bridge allowlist removals.
-    // Mainnet: 1 token-pool removal + 18 legacy bridge allowlist removals built by the script.
-    uint256 public constant L2_SHUTDOWN_MESSAGE_COUNT = 38;
-    uint256 public constant MAINNET_SHUTDOWN_CALL_COUNT = 19;
+    // L2: 4 token-pool removals + 4 minter revocations.
+    // Mainnet: 1 token-pool removal built by the script.
+    uint256 public constant L2_SHUTDOWN_MESSAGE_COUNT = 8;
+    uint256 public constant MAINNET_SHUTDOWN_CALL_COUNT = 1;
 
     // Chainlink CCIP chain selectors. These are not EVM chain IDs.
     uint64 public constant MAINNET_CHAIN_SELECTOR = 5009297550715157269;
@@ -126,14 +119,6 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
     address public constant OPTIMISM_TOKEN = 0xfc63C9c8Ba44AE89C01265453Ed4F427C80cBd4E;
     address public constant ARBITRUM_TOKEN = 0x7a1e123e41458aabaB8068BFed6010D8f9480898;
     address public constant BERACHAIN_TOKEN = 0x02eaa69646183c069FC2B64F15923F27B9CF3b03;
-
-    // Legacy programmable bridge contracts. Shutdown removes their destination/source chain
-    // allowlists and accepted sender allowlists so legacy message passing is disabled.
-    address public constant OLD_MAINNET_PROGRAMMABLE_BRIDGE = 0x7A43C13f7Fb3A0bF19cEB3fBC583A0CAda6D29a2;
-    address public constant NEW_MAINNET_PROGRAMMABLE_BRIDGE = 0x70F3795c1EF726c58FfeA2e1A51526ac5707C066;
-    address public constant BASE_PROGRAMMABLE_BRIDGE = 0x0173804066F7403E0815680F3DDa125a6cd10F7c;
-    address public constant OP_PROGRAMMABLE_BRIDGE = 0xb5A998E90AdeD2C97f7ceDbb7c45Bbc27E82dfdD;
-    address public constant ARB_PROGRAMMABLE_BRIDGE = 0x0173804066F7403E0815680F3DDa125a6cd10F7c;
 
     // Cached immutable pointer to the hardcoded GovernanceSender.
     GovernanceSender private immutable GOVERNANCE_SENDER;
@@ -296,91 +281,8 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
             gasLimit: SET_MINTER_GAS_LIMIT
         });
 
-        count = _appendLegacyBridgeShutdown(messages, count, BASE_CHAIN_SELECTOR, BASE_PROGRAMMABLE_BRIDGE);
-        count = _appendLegacyBridgeShutdown(messages, count, OPTIMISM_CHAIN_SELECTOR, OP_PROGRAMMABLE_BRIDGE);
-        count = _appendLegacyBridgeShutdown(messages, count, ARBITRUM_CHAIN_SELECTOR, ARB_PROGRAMMABLE_BRIDGE);
-
         // The fixed count is an audit guard: adding, removing, or skipping a message changes this assert.
         assert(count == L2_SHUTDOWN_MESSAGE_COUNT);
-    }
-
-    function _appendLegacyBridgeShutdown(
-        ShutdownMessage[] memory buffer,
-        uint256 count,
-        uint64 destinationChainSelector,
-        address bridge
-    ) internal pure returns (uint256) {
-        uint64[3] memory remoteSelectors;
-        address[4] memory senders;
-        uint64[4] memory senderSelectors;
-
-        // Every L2 legacy bridge accepted both old and new mainnet programmable bridges as senders.
-        // Those mainnet senders are always removed first for each L2.
-        senders[0] = OLD_MAINNET_PROGRAMMABLE_BRIDGE;
-        senderSelectors[0] = MAINNET_CHAIN_SELECTOR;
-        senders[1] = NEW_MAINNET_PROGRAMMABLE_BRIDGE;
-        senderSelectors[1] = MAINNET_CHAIN_SELECTOR;
-
-        // For each L2 bridge, identify:
-        // - remoteSelectors: chains that should no longer be valid destinations or sources;
-        // - senders: remote bridge contracts that should no longer be accepted as message senders;
-        // - senderSelectors: the source chain selector paired with each sender address.
-        if (destinationChainSelector == BASE_CHAIN_SELECTOR) {
-            remoteSelectors = [ARBITRUM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, OPTIMISM_CHAIN_SELECTOR];
-            senders[2] = ARB_PROGRAMMABLE_BRIDGE;
-            senderSelectors[2] = ARBITRUM_CHAIN_SELECTOR;
-            senders[3] = OP_PROGRAMMABLE_BRIDGE;
-            senderSelectors[3] = OPTIMISM_CHAIN_SELECTOR;
-        } else if (destinationChainSelector == OPTIMISM_CHAIN_SELECTOR) {
-            remoteSelectors = [ARBITRUM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, BASE_CHAIN_SELECTOR];
-            senders[2] = ARB_PROGRAMMABLE_BRIDGE;
-            senderSelectors[2] = ARBITRUM_CHAIN_SELECTOR;
-            senders[3] = BASE_PROGRAMMABLE_BRIDGE;
-            senderSelectors[3] = BASE_CHAIN_SELECTOR;
-        } else if (destinationChainSelector == ARBITRUM_CHAIN_SELECTOR) {
-            remoteSelectors = [OPTIMISM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, BASE_CHAIN_SELECTOR];
-            senders[2] = OP_PROGRAMMABLE_BRIDGE;
-            senderSelectors[2] = OPTIMISM_CHAIN_SELECTOR;
-            senders[3] = BASE_PROGRAMMABLE_BRIDGE;
-            senderSelectors[3] = BASE_CHAIN_SELECTOR;
-        } else {
-            revert UnknownChainSelector(destinationChainSelector);
-        }
-
-        // Phase 3a: stop the legacy bridge from sending to or receiving from every remote chain.
-        for (uint256 i; i < remoteSelectors.length; ++i) {
-            uint64 remoteSelector = remoteSelectors[i];
-            buffer[count++] = ShutdownMessage({
-                destinationChainSelector: destinationChainSelector,
-                target: bridge,
-                callData: abi.encodeWithSelector(
-                    IBridgeShutdownProgrammableBridge.allowlistDestinationChain.selector, remoteSelector, false
-                ),
-                gasLimit: LEGACY_BRIDGE_GAS_LIMIT
-            });
-            buffer[count++] = ShutdownMessage({
-                destinationChainSelector: destinationChainSelector,
-                target: bridge,
-                callData: abi.encodeWithSelector(
-                    IBridgeShutdownProgrammableBridge.allowlistSourceChain.selector, remoteSelector, false
-                ),
-                gasLimit: LEGACY_BRIDGE_GAS_LIMIT
-            });
-        }
-
-        // Phase 3b: stop every known remote legacy bridge from being accepted as a sender.
-        for (uint256 i; i < senders.length; ++i) {
-            buffer[count++] = ShutdownMessage({
-                destinationChainSelector: destinationChainSelector,
-                target: bridge,
-                callData: abi.encodeWithSelector(
-                    IBridgeShutdownProgrammableBridge.allowlistSender.selector, senders[i], senderSelectors[i], false
-                ),
-                gasLimit: LEGACY_BRIDGE_GAS_LIMIT
-            });
-        }
-
-        return count;
     }
 
     // Hardcoded token-pool lanes to remove on each L2. The order is part of the fixed plan and

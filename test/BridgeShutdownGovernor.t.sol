@@ -131,18 +131,13 @@ contract BridgeShutdownGovernorTest is Test {
         assertEq(messageIds.length, messageCount);
         assertEq(router.sends(), messageCount);
         assertEq(address(governanceSender).balance, 0);
-        assertEq(router.lastDestinationChainSelector(), shutdownGovernor.ARBITRUM_CHAIN_SELECTOR());
-        assertEq(router.lastReceiver(), abi.encode(shutdownGovernor.ARBITRUM_GOVERNANCE_PROXY()));
+        assertEq(router.lastDestinationChainSelector(), shutdownGovernor.BERACHAIN_CHAIN_SELECTOR());
+        assertEq(router.lastReceiver(), abi.encode(shutdownGovernor.BERACHAIN_GOVERNANCE_PROXY()));
         assertEq(
             router.lastData(),
             abi.encode(
-                shutdownGovernor.ARB_PROGRAMMABLE_BRIDGE(),
-                abi.encodeWithSignature(
-                    "allowlistSender(address,uint64,bool)",
-                    shutdownGovernor.BASE_PROGRAMMABLE_BRIDGE(),
-                    shutdownGovernor.BASE_CHAIN_SELECTOR(),
-                    false
-                )
+                shutdownGovernor.BERACHAIN_TOKEN(),
+                abi.encodeWithSignature("setMinter(address,bool)", shutdownGovernor.BERACHAIN_TOKEN_POOL(), false)
             )
         );
         assertGt(uint256(messageIds[0]), 0);
