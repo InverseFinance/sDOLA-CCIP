@@ -31,6 +31,11 @@ contract GovernanceProxyTest is Test, AddrConfig {
         proxy.ccipReceive(message);
     }
 
+    function testSetupBeraNetwork() external {
+
+
+    }
+
     function buildCCIPMessage(
         address _calledContract,
         bytes memory _callData
