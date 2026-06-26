@@ -20,6 +20,13 @@ contract SINVBridgeShutdownGovernor is ConfirmedOwner {
         uint256 gasLimit;
     }
 
+    // A programmable-bridge sender to de-allowlist on the destination L2: the bridge contract
+    // `bridge` together with the source-chain `selector` it was previously allowed to send from.
+    struct AllowedSender {
+        address bridge;
+        uint64 selector;
+    }
+
     error InvalidAddress();
     error InvalidTarget();
     error InvalidCallData();
@@ -51,6 +58,8 @@ contract SINVBridgeShutdownGovernor is ConfirmedOwner {
 
     address public constant OLD_MAINNET_PROGRAMMABLE_BRIDGE = 0x7A43C13f7Fb3A0bF19cEB3fBC583A0CAda6D29a2;
     address public constant NEW_MAINNET_PROGRAMMABLE_BRIDGE = 0x70F3795c1EF726c58FfeA2e1A51526ac5707C066;
+    // Base and Arbitrum share the same programmable-bridge address (same contract deployed at the
+    // same address on both chains). This is intentional, not a copy-paste error.
     address public constant BASE_PROGRAMMABLE_BRIDGE = 0x0173804066F7403E0815680F3DDa125a6cd10F7c;
     address public constant OP_PROGRAMMABLE_BRIDGE = 0xb5A998E90AdeD2C97f7ceDbb7c45Bbc27E82dfdD;
     address public constant ARB_PROGRAMMABLE_BRIDGE = 0x0173804066F7403E0815680F3DDa125a6cd10F7c;
@@ -107,8 +116,11 @@ contract SINVBridgeShutdownGovernor is ConfirmedOwner {
     function withdraw(address payable beneficiary) external onlyOwner {
         if (beneficiary == address(0)) revert InvalidAddress();
 
+        // Best-effort sweep of GovernanceSender's balance. This only succeeds while this contract
+        // still owns the sender, so it is intentionally non-reverting: recovering this contract's
+        // own balance below must remain possible even after sender ownership has been handed back.
         if (address(GOVERNANCE_SENDER).balance > 0) {
-            GOVERNANCE_SENDER.withdraw(beneficiary);
+            try GOVERNANCE_SENDER.withdraw(beneficiary) {} catch {}
         }
 
         uint256 amount = address(this).balance;
@@ -143,33 +155,32 @@ contract SINVBridgeShutdownGovernor is ConfirmedOwner {
         uint64 destinationChainSelector,
         address bridge
     ) internal pure returns (uint256) {
+        // Lanes to tear down on this L2: the other two L2s plus mainnet. For each we revoke both
+        // its destination-chain and its source-chain allowlist entry.
         uint64[3] memory remoteSelectors;
-        address[4] memory senders;
-        uint64[4] memory senderSelectors;
 
-        senders[0] = OLD_MAINNET_PROGRAMMABLE_BRIDGE;
-        senderSelectors[0] = MAINNET_CHAIN_SELECTOR;
-        senders[1] = NEW_MAINNET_PROGRAMMABLE_BRIDGE;
-        senderSelectors[1] = MAINNET_CHAIN_SELECTOR;
+        // Senders to de-allowlist on this L2: both mainnet programmable bridges (old + new, which
+        // share the mainnet selector) plus the two other L2 bridges. Mainnet appears twice here but
+        // only once in remoteSelectors above, hence the 3-vs-4 length asymmetry.
+        AllowedSender[4] memory senders;
+        senders[0] = AllowedSender(OLD_MAINNET_PROGRAMMABLE_BRIDGE, MAINNET_CHAIN_SELECTOR);
+        senders[1] = AllowedSender(NEW_MAINNET_PROGRAMMABLE_BRIDGE, MAINNET_CHAIN_SELECTOR);
 
         if (destinationChainSelector == BASE_CHAIN_SELECTOR) {
+            // Other L2s seen from Base: Arbitrum and Optimism.
             remoteSelectors = [ARBITRUM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, OPTIMISM_CHAIN_SELECTOR];
-            senders[2] = ARB_PROGRAMMABLE_BRIDGE;
-            senderSelectors[2] = ARBITRUM_CHAIN_SELECTOR;
-            senders[3] = OP_PROGRAMMABLE_BRIDGE;
-            senderSelectors[3] = OPTIMISM_CHAIN_SELECTOR;
+            senders[2] = AllowedSender(ARB_PROGRAMMABLE_BRIDGE, ARBITRUM_CHAIN_SELECTOR);
+            senders[3] = AllowedSender(OP_PROGRAMMABLE_BRIDGE, OPTIMISM_CHAIN_SELECTOR);
         } else if (destinationChainSelector == OPTIMISM_CHAIN_SELECTOR) {
+            // Other L2s seen from Optimism: Arbitrum and Base.
             remoteSelectors = [ARBITRUM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, BASE_CHAIN_SELECTOR];
-            senders[2] = ARB_PROGRAMMABLE_BRIDGE;
-            senderSelectors[2] = ARBITRUM_CHAIN_SELECTOR;
-            senders[3] = BASE_PROGRAMMABLE_BRIDGE;
-            senderSelectors[3] = BASE_CHAIN_SELECTOR;
+            senders[2] = AllowedSender(ARB_PROGRAMMABLE_BRIDGE, ARBITRUM_CHAIN_SELECTOR);
+            senders[3] = AllowedSender(BASE_PROGRAMMABLE_BRIDGE, BASE_CHAIN_SELECTOR);
         } else if (destinationChainSelector == ARBITRUM_CHAIN_SELECTOR) {
+            // Other L2s seen from Arbitrum: Optimism and Base.
             remoteSelectors = [OPTIMISM_CHAIN_SELECTOR, MAINNET_CHAIN_SELECTOR, BASE_CHAIN_SELECTOR];
-            senders[2] = OP_PROGRAMMABLE_BRIDGE;
-            senderSelectors[2] = OPTIMISM_CHAIN_SELECTOR;
-            senders[3] = BASE_PROGRAMMABLE_BRIDGE;
-            senderSelectors[3] = BASE_CHAIN_SELECTOR;
+            senders[2] = AllowedSender(OP_PROGRAMMABLE_BRIDGE, OPTIMISM_CHAIN_SELECTOR);
+            senders[3] = AllowedSender(BASE_PROGRAMMABLE_BRIDGE, BASE_CHAIN_SELECTOR);
         } else {
             revert UnknownChainSelector(destinationChainSelector);
         }
@@ -195,13 +206,14 @@ contract SINVBridgeShutdownGovernor is ConfirmedOwner {
         }
 
         for (uint256 i; i < senders.length; ++i) {
+            AllowedSender memory sender = senders[i];
             buffer[count++] = ShutdownMessage({
                 destinationChainSelector: destinationChainSelector,
                 target: bridge,
                 callData: abi.encodeWithSelector(
                     ISINVBridgeShutdownProgrammableBridge.allowlistSender.selector,
-                    senders[i],
-                    senderSelectors[i],
+                    sender.bridge,
+                    sender.selector,
                     false
                 ),
                 gasLimit: LEGACY_BRIDGE_GAS_LIMIT

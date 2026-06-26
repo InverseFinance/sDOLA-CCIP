@@ -65,7 +65,6 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
     error InvalidCallData();
     error InvalidGasLimit();
     error EthTransferFailed(address target, uint256 amount);
-    error UnknownChainSelector(uint64 chainSelector);
 
     // Events are limited to operational milestones: funding the sender, becoming an allowed caller,
     // each CCIP shutdown message sent, ownership cleanup, and ETH recovery.
@@ -185,8 +184,11 @@ contract BridgeShutdownGovernor is ConfirmedOwner {
     function withdraw(address payable beneficiary) external onlyOwner {
         if (beneficiary == address(0)) revert InvalidAddress();
 
+        // Best-effort sweep of GovernanceSender's balance. This only succeeds while this contract
+        // still owns the sender, so it is intentionally non-reverting: recovering this contract's
+        // own balance below must remain possible even after sender ownership has been handed back.
         if (address(GOVERNANCE_SENDER).balance > 0) {
-            GOVERNANCE_SENDER.withdraw(beneficiary);
+            try GOVERNANCE_SENDER.withdraw(beneficiary) {} catch {}
         }
 
         uint256 amount = address(this).balance;
